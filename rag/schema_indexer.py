@@ -9,6 +9,6 @@ def build_schema_index(
 ):
 
     return FAISS.from_documents(
-        documents=documents,
-        embedding=embeddings,
+        documents,
+        embeddings,
     )

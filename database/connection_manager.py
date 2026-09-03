@@ -1,12 +1,12 @@
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import URL, Engine
 
 from config.datasource_config import DATASOURCES
 
 
-_engines = {}
+_engines: dict[str, Engine] = {}
 
 
 def get_engine(
@@ -14,21 +14,11 @@ def get_engine(
 ) -> Engine:
 
     if datasource_name in _engines:
-
-        return _engines[
-            datasource_name
-        ]
+        return _engines[datasource_name]
 
     config = DATASOURCES[
         datasource_name
     ]
-
-    if config["driver"] != "postgresql":
-
-        raise ValueError(
-            f'Unsupported database driver: '
-            f'{config["driver"]}'
-        )
 
     required = [
         "host",
@@ -50,13 +40,13 @@ def get_engine(
             + ", ".join(missing)
         )
 
-    url = (
-        "postgresql+psycopg://"
-        f'{config["username"]}:'
-        f'{config["password"]}@'
-        f'{config["host"]}:'
-        f'{config["port"]}/'
-        f'{config["database"]}'
+    url = URL.create(
+        "postgresql+psycopg",
+        username=config["username"],
+        password=config["password"],
+        host=config["host"],
+        port=config["port"],
+        database=config["database"],
     )
 
     engine = create_engine(
@@ -65,9 +55,7 @@ def get_engine(
         pool_recycle=1800,
     )
 
-    _engines[
-        datasource_name
-    ] = engine
+    _engines[datasource_name] = engine
 
     return engine
 

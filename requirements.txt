@@ -4,8 +4,10 @@ pandas
 
 sqlalchemy
 psycopg[binary]
+sqlglot
 
 faiss-cpu
+sentence-transformers
 
 langchain
 langchain-community
@@ -16,5 +18,3 @@ langchain-ollama
 langchain-openai
 langchain-anthropic
 langchain-google-genai
-
-sentence-transformers

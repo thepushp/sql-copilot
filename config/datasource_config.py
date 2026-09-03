@@ -46,11 +46,6 @@ DATASOURCES = {
         "password": _env(
             "DEV_DB_PASSWORD"
         ),
-
-        "schema": _env(
-            "DEV_DB_SCHEMA",
-            "public",
-        ),
     },
 
     "Test": {
@@ -79,11 +74,6 @@ DATASOURCES = {
 
         "password": _env(
             "TEST_DB_PASSWORD"
-        ),
-
-        "schema": _env(
-            "TEST_DB_SCHEMA",
-            "public",
         ),
     },
 }

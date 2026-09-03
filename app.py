@@ -1,52 +1,73 @@
 import streamlit as st
 
-from config.model_config import MODEL_CONFIG
 from config.datasource_config import DATASOURCES
-from database.schema_inspector import get_schema_documents
-from database.sql_guard import validate_sql
-from database.query_executor import execute_query
-from rag.embeddings import get_embeddings
-from rag.schema_indexer import build_schema_index
-from rag.retriever import create_retriever
-from services.llm_service import get_llm
-from services.sql_generation_service import generate_sql
+from config.model_config import MODEL_CONFIG
+
+from database.database_inspector import (
+    inspect_database,
+)
+
+from database.query_executor import (
+    execute_query,
+)
+
+from database.sql_guard import (
+    validate_sql,
+)
+
+from rag.context_builder import (
+    build_context,
+)
+
+from rag.embeddings import (
+    get_embeddings,
+)
+
+from rag.schema_indexer import (
+    build_schema_index,
+)
+
+from rag.retriever import (
+    create_retriever,
+)
+
+from services.llm_service import (
+    get_llm,
+)
+
+from services.query_service import (
+    process_question,
+)
 
 
 st.set_page_config(
-    page_title="RAG DB Assistant",
+    page_title="RAG DB Copilot",
     page_icon="🗄️",
     layout="wide",
 )
 
 
-# --------------------------------------------------
-# Session State
-# --------------------------------------------------
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+
+if "database_metadata" not in st.session_state:
+    st.session_state.database_metadata = None
+
 
 if "schema_index" not in st.session_state:
     st.session_state.schema_index = None
 
-if "schema_docs" not in st.session_state:
-    st.session_state.schema_docs = []
 
 if "indexed_datasource" not in st.session_state:
     st.session_state.indexed_datasource = None
 
 
-def clear_chat():
-    st.session_state.messages = []
-
-
-# --------------------------------------------------
-# Sidebar
-# --------------------------------------------------
-
 with st.sidebar:
 
-    st.header("⚙️ Configuration")
+    st.header(
+        "⚙️ Configuration"
+    )
 
     datasource_name = st.selectbox(
         "Datasource",
@@ -65,53 +86,62 @@ with st.sidebar:
 
     temperature = st.slider(
         "Temperature",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.1,
-        step=0.1,
+        0.0,
+        1.0,
+        0.1,
+        0.1,
     )
 
     st.divider()
 
     if st.button(
-        "🔄 Index Database Schema",
+        "🔄 Discover & Index Database",
         use_container_width=True,
     ):
 
         with st.spinner(
-            "Reading database schema..."
+            "Discovering all accessible schemas..."
         ):
 
             try:
 
-                docs = get_schema_documents(
+                metadata = inspect_database(
                     datasource_name
                 )
 
-                embeddings = get_embeddings()
-
-                st.session_state.schema_index = (
-                    build_schema_index(
-                        docs,
-                        embeddings,
-                    )
+                documents = (
+                    metadata.to_documents()
                 )
 
-                st.session_state.schema_docs = docs
+                index = build_schema_index(
+                    documents,
+                    get_embeddings(),
+                )
+
+                st.session_state.database_metadata = (
+                    metadata
+                )
+
+                st.session_state.schema_index = (
+                    index
+                )
 
                 st.session_state.indexed_datasource = (
                     datasource_name
                 )
 
                 st.success(
-                    f"Indexed {len(docs)} "
-                    "schema documents."
+                    f"Indexed "
+                    f"{metadata.schema_count} schemas, "
+                    f"{metadata.table_count} tables "
+                    f"and "
+                    f"{metadata.view_count} views."
                 )
 
             except Exception as exc:
 
                 st.error(
-                    f"Schema indexing failed: {exc}"
+                    f"Database discovery failed: {exc}"
                 )
 
     if st.button(
@@ -119,40 +149,19 @@ with st.sidebar:
         use_container_width=True,
     ):
 
-        clear_chat()
+        st.session_state.messages = []
+
         st.rerun()
 
-    st.divider()
 
-    st.caption(
-        f"Datasource: {datasource_name}"
-    )
-
-    st.caption(
-        f"Provider: {provider}"
-    )
-
-    st.caption(
-        f"Model: {model}"
-    )
-
-
-# --------------------------------------------------
-# Main UI
-# --------------------------------------------------
-
-st.title("🗄️ RAG Database Assistant")
-
-st.caption(
-    "Ask questions about your database. "
-    "The assistant generates and executes "
-    "read-only SQL."
+st.title(
+    "🗄️ RAG Database Copilot"
 )
 
+st.caption(
+    "Database-wide natural-language SQL assistant"
+)
 
-# --------------------------------------------------
-# Schema status
-# --------------------------------------------------
 
 if (
     st.session_state.indexed_datasource
@@ -160,230 +169,378 @@ if (
 ):
 
     st.info(
-        "Click **Index Database Schema** "
-        "before asking database questions."
+        "Click **Discover & Index Database** "
+        "before asking questions."
     )
 
 
-# --------------------------------------------------
-# Chat history
-# --------------------------------------------------
-
-for message in st.session_state.messages:
-
-    with st.chat_message(
-        message["role"]
-    ):
-
-        st.markdown(
-            message["content"]
-        )
-
-        if message.get("sql"):
-
-            st.code(
-                message["sql"],
-                language="sql",
-            )
-
-        if message.get("error"):
-
-            st.error(
-                message["error"]
-            )
-
-        if message.get("rows") is not None:
-
-            st.dataframe(
-                message["rows"],
-                use_container_width=True,
-            )
-
-            st.caption(
-                f'{message["row_count"]} rows • '
-                f'{message["execution_ms"]:.2f} ms'
-            )
-
-
-# --------------------------------------------------
-# User input
-# --------------------------------------------------
-
-question = st.chat_input(
-    "e.g. Give me students added after 2026-01-01"
+tab_chat, tab_explorer = st.tabs(
+    [
+        "💬 Chat",
+        "🌳 Database Explorer",
+    ]
 )
 
 
-if question:
+with tab_explorer:
 
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": question,
-        }
+    metadata = (
+        st.session_state.database_metadata
     )
 
-    with st.chat_message("user"):
+    if not metadata:
 
-        st.markdown(question)
+        st.info(
+            "Discover the database first."
+        )
 
-    with st.chat_message("assistant"):
+    else:
 
-        if (
-            st.session_state.schema_index
-            is None
-        ):
+        st.write(
+            f"**{metadata.schema_count} schemas** · "
+            f"**{metadata.table_count} tables** · "
+            f"**{metadata.view_count} views**"
+        )
 
-            st.warning(
-                "Please index the database "
-                "schema first."
-            )
+        for schema in metadata.schemas:
 
-            st.stop()
-
-        try:
-
-            # ------------------------------------------
-            # Retrieve schema
-            # ------------------------------------------
-
-            with st.spinner(
-                "Understanding your question..."
+            with st.expander(
+                f"📁 {schema.name}"
             ):
 
-                retriever = create_retriever(
-                    st.session_state.schema_index
-                )
+                for table in schema.tables:
 
-                schema_docs = (
-                    retriever.invoke(question)
-                )
+                    st.markdown(
+                        f"### 📋 {table.name}"
+                    )
 
-                llm = get_llm(
-                    provider=provider,
-                    model=model,
-                    temperature=temperature,
-                )
+                    columns = []
 
-                sql = generate_sql(
-                    llm=llm,
-                    question=question,
-                    schema_docs=schema_docs,
-                )
+                    for column in table.columns:
 
-            # ------------------------------------------
-            # Show SQL
-            # ------------------------------------------
+                        columns.append(
+                            {
+                                "Column": column.name,
+                                "Type": column.data_type,
+                                "Nullable": column.nullable,
+                                "Default": column.default,
+                                "PK": (
+                                    "✓"
+                                    if column.primary_key
+                                    else ""
+                                ),
+                            }
+                        )
 
-            st.subheader(
-                "Generated SQL"
+                    st.dataframe(
+                        columns,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    if table.foreign_keys:
+
+                        st.caption(
+                            "Foreign Keys"
+                        )
+
+                        for fk in (
+                            table.foreign_keys
+                        ):
+
+                            st.write(
+                                f"`{fk.column}` → "
+                                f"`{fk.foreign_schema}."
+                                f"{fk.foreign_table}."
+                                f"{fk.foreign_column}`"
+                            )
+
+                    if table.indexes:
+
+                        st.caption(
+                            "Indexes"
+                        )
+
+                        for index in (
+                            table.indexes
+                        ):
+
+                            st.write(
+                                f"`{index.name}` — "
+                                f"{', '.join(index.columns)}"
+                            )
+
+
+with tab_chat:
+
+    for message in (
+        st.session_state.messages
+    ):
+
+        with st.chat_message(
+            message["role"]
+        ):
+
+            st.markdown(
+                message["content"]
             )
 
-            st.code(
-                sql,
-                language="sql",
-            )
+            if message.get("sql"):
 
-            # ------------------------------------------
-            # Validate SQL
-            # ------------------------------------------
-
-            validation = validate_sql(sql)
-
-            if not validation.allowed:
-
-                error = (
-                    "SQL was not executed: "
-                    f"{validation.reason}"
+                st.code(
+                    message["sql"],
+                    language="sql",
                 )
 
-                st.error(error)
+            if message.get(
+                "blocked"
+            ):
 
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": error,
-                        "sql": sql,
-                        "error": error,
-                    }
+                st.warning(
+                    "Execution blocked. "
+                    "DML/DDL is review-only."
+                )
+
+            if message.get(
+                "rows"
+            ) is not None:
+
+                st.dataframe(
+                    message["rows"],
+                    use_container_width=True,
+                )
+
+                st.caption(
+                    f'{message["row_count"]} rows · '
+                    f'{message["execution_ms"]:.2f} ms'
+                )
+
+            if message.get(
+                "error"
+            ):
+
+                st.error(
+                    message["error"]
+                )
+
+
+    question = st.chat_input(
+        "Ask anything about the database..."
+    )
+
+
+    if question:
+
+        st.session_state.messages.append(
+            {
+                "role": "user",
+                "content": question,
+            }
+        )
+
+        with st.chat_message(
+            "user"
+        ):
+
+            st.markdown(
+                question
+            )
+
+
+        with st.chat_message(
+            "assistant"
+        ):
+
+            if not st.session_state.schema_index:
+
+                st.warning(
+                    "Discover and index the "
+                    "database first."
                 )
 
                 st.stop()
 
-            # ------------------------------------------
-            # Execute
-            # ------------------------------------------
 
-            with st.spinner(
-                "Executing read-only query..."
-            ):
+            try:
 
-                result = execute_query(
-                    datasource_name=datasource_name,
-                    sql=sql,
+                with st.spinner(
+                    "Finding relevant database objects..."
+                ):
+
+                    retriever = (
+                        create_retriever(
+                            st.session_state.schema_index
+                        )
+                    )
+
+                    documents = (
+                        retriever.invoke(
+                            question
+                        )
+                    )
+
+                    context = (
+                        build_context(
+                            documents
+                        )
+                    )
+
+
+                with st.spinner(
+                    "Generating SQL..."
+                ):
+
+                    llm = get_llm(
+                        provider=provider,
+                        model=model,
+                        temperature=temperature,
+                    )
+
+                    response = (
+                        process_question(
+                            llm=llm,
+                            question=question,
+                            context=context,
+                        )
+                    )
+
+
+                st.subheader(
+                    "Generated SQL"
                 )
 
-            # ------------------------------------------
-            # Result
-            # ------------------------------------------
+                st.code(
+                    response.sql,
+                    language="sql",
+                )
 
-            if result.error:
+
+                if response.operation != "READ":
+
+                    st.warning(
+                        f"Detected operation: "
+                        f"**{response.operation}**"
+                    )
+
+                    st.info(
+                        "This SQL is available for "
+                        "review/copying only. "
+                        "DML and DDL are never "
+                        "executed."
+                    )
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": (
+                                f"Generated "
+                                f"{response.operation} "
+                                "SQL. Execution was blocked."
+                            ),
+                            "sql": response.sql,
+                            "blocked": True,
+                        }
+                    )
+
+                    st.stop()
+
+
+                validation = validate_sql(
+                    response.sql
+                )
+
+
+                if not validation.allowed:
+
+                    st.error(
+                        validation.reason
+                    )
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "The generated SQL "
+                                "failed the read-only "
+                                "SQL guard."
+                            ),
+                            "sql": response.sql,
+                            "error": validation.reason,
+                        }
+                    )
+
+                    st.stop()
+
+
+                with st.spinner(
+                    "Executing query..."
+                ):
+
+                    result = execute_query(
+                        datasource_name,
+                        response.sql,
+                    )
+
+
+                if result.error:
+
+                    st.error(
+                        result.error
+                    )
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "The query failed."
+                            ),
+                            "sql": response.sql,
+                            "error": result.error,
+                        }
+                    )
+
+                else:
+
+                    st.success(
+                        f"{result.row_count} rows "
+                        f"returned in "
+                        f"{result.execution_ms:.2f} ms"
+                    )
+
+                    st.dataframe(
+                        result.rows,
+                        use_container_width=True,
+                    )
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "Query executed successfully."
+                            ),
+                            "sql": response.sql,
+                            "rows": result.rows,
+                            "row_count": result.row_count,
+                            "execution_ms": (
+                                result.execution_ms
+                            ),
+                        }
+                    )
+
+
+            except Exception as exc:
 
                 st.error(
-                    result.error
+                    str(exc)
                 )
 
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
                         "content": (
-                            "The query could not "
-                            "be executed."
+                            "The request could "
+                            "not be completed."
                         ),
-                        "sql": sql,
-                        "error": result.error,
+                        "error": str(exc),
                     }
                 )
-
-            else:
-
-                st.success(
-                    f"{result.row_count} rows returned "
-                    f"in {result.execution_ms:.2f} ms"
-                )
-
-                st.dataframe(
-                    result.rows,
-                    use_container_width=True,
-                )
-
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": (
-                            "Query executed successfully. "
-                            f"{result.row_count} rows returned."
-                        ),
-                        "sql": sql,
-                        "rows": result.rows,
-                        "row_count": result.row_count,
-                        "execution_ms": result.execution_ms,
-                    }
-                )
-
-        except Exception as exc:
-
-            error = str(exc)
-
-            st.error(error)
-
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": (
-                        "The request could not "
-                        "be completed."
-                    ),
-                    "error": error,
-                }
-            )

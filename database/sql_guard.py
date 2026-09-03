@@ -1,122 +1,114 @@
-import re
-
 from dataclasses import dataclass
+
+import sqlglot
+from sqlglot import exp
 
 
 @dataclass
 class SQLValidation:
-
     allowed: bool
     reason: str = ""
 
 
-FORBIDDEN_KEYWORDS = {
-    "INSERT",
-    "UPDATE",
-    "DELETE",
-    "MERGE",
-    "UPSERT",
-    "TRUNCATE",
-    "CREATE",
-    "ALTER",
-    "DROP",
-    "GRANT",
-    "REVOKE",
-    "COMMENT",
-    "VACUUM",
-    "REINDEX",
-    "CALL",
-    "DO",
-    "COPY",
-}
+def parse_sql(sql: str):
 
-
-def _strip_comments(
-    sql: str,
-) -> str:
-
-    sql = re.sub(
-        r"/\*.*?\*/",
-        " ",
+    statements = sqlglot.parse(
         sql,
-        flags=re.DOTALL,
+        read="postgres",
     )
 
-    return re.sub(
-        r"--.*?$",
-        " ",
-        sql,
-        flags=re.MULTILINE,
-    )
+    if len(statements) != 1:
+
+        raise ValueError(
+            "Exactly one SQL statement is allowed."
+        )
+
+    return statements[0]
 
 
-def validate_sql(
-    sql: str,
-) -> SQLValidation:
+def classify_sql(sql: str) -> str:
+
+    tree = parse_sql(sql)
+
+    if isinstance(
+        tree,
+        (
+            exp.Select,
+            exp.Union,
+            exp.Intersect,
+            exp.Except,
+        ),
+    ):
+        return "READ"
+
+    if isinstance(
+        tree,
+        (
+            exp.Insert,
+            exp.Update,
+            exp.Delete,
+            exp.Merge,
+        ),
+    ):
+        return "DML"
+
+    if isinstance(
+        tree,
+        (
+            exp.Create,
+            exp.Alter,
+            exp.Drop,
+            exp.Truncate,
+        ),
+    ):
+        return "DDL"
+
+    return "OTHER"
+
+
+def validate_sql(sql: str) -> SQLValidation:
 
     if not sql or not sql.strip():
 
         return SQLValidation(
             False,
-            "Empty SQL.",
+            "SQL is empty.",
         )
 
-    cleaned = (
-        _strip_comments(sql)
-        .strip()
-    )
+    try:
+        tree = parse_sql(sql)
 
-    statements = [
-        statement.strip()
-        for statement in cleaned.split(";")
-        if statement.strip()
-    ]
-
-    if len(statements) != 1:
+    except Exception as exc:
 
         return SQLValidation(
             False,
-            "Multiple SQL statements "
-            "are not allowed.",
+            f"Invalid PostgreSQL SQL: {exc}",
         )
 
-    statement = statements[0]
+    operation = classify_sql(sql)
 
-    if not re.match(
-        r"^\s*(SELECT|WITH)\b",
-        statement,
-        re.IGNORECASE,
-    ):
+    if operation != "READ":
 
         return SQLValidation(
             False,
-            "Only SELECT/WITH read-only "
-            "queries can be executed.",
+            (
+                "Only SELECT/WITH queries can execute. "
+                f"Detected operation: {operation}"
+            ),
         )
 
-    upper_sql = statement.upper()
-
-    for keyword in FORBIDDEN_KEYWORDS:
-
-        if re.search(
-            rf"\b{re.escape(keyword)}\b",
-            upper_sql,
-        ):
-
-            return SQLValidation(
-                False,
-                f"Forbidden SQL operation "
-                f"detected: {keyword}.",
-            )
-
-    if re.search(
-        r"\bINTO\s+(?:TEMP(?:ORARY)?\s+)?",
-        upper_sql,
-    ):
+    if tree.find(exp.Into):
 
         return SQLValidation(
             False,
             "SELECT INTO is not allowed.",
+        )
+
+    if tree.find(exp.Copy):
+
+        return SQLValidation(
+            False,
+            "COPY is not allowed.",
         )
 
     return SQLValidation(True)
