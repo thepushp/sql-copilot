@@ -7,7 +7,7 @@ from database.schema_metadata import (
     ForeignKeyMetadata,
     IndexMetadata,
     SchemaMetadata,
-    TableMetadata,
+    TableMetadata, infer_relationships,
 )
 
 
@@ -305,10 +305,14 @@ def inspect_database(datasource_name: str) -> DatabaseMetadata:
     # Return Database Metadata
     # ---------------------------------------------------------
 
-    return DatabaseMetadata(
+    database_metadata = DatabaseMetadata(
         schemas=sorted(
             schemas.values(),
             key=lambda schema: schema.name,
         ),
         view_count=int(view_count),
     )
+
+    infer_relationships(database_metadata)
+
+    return database_metadata
