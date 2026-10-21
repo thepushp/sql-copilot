@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="SQL Copilot">
+  <rect width="64" height="64" rx="14" fill="#2563eb"/>
+  <path d="M11 24v22a16 6.5 0 0 0 32 0V24z" fill="#fff"/>
+  <ellipse cx="27" cy="24" rx="16" ry="6.5" fill="#fff"/>
+  <path d="M11 32.5a16 6.5 0 0 0 32 0M11 40a16 6.5 0 0 0 32 0" fill="none" stroke="#2563eb" stroke-width="2.4"/>
+  <path d="M47 8l2.4 6.6L56 17l-6.6 2.4L47 26l-2.4-6.6L38 17l6.6-2.4z" fill="#fde68a"/>
+</svg>

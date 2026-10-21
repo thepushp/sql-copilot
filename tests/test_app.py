@@ -19,9 +19,9 @@ from services import example_store, glossary
 
 pytestmark = pytest.mark.app
 
-CHAT = "💬 Chat"
-EXPLORER = "🌳 Explorer"
-ER = "🔗 ER diagram"
+CHAT = ":material/chat: Chat"
+EXPLORER = ":material/account_tree: Explorer"
+ER = ":material/schema: ER diagram"
 
 EMBEDDINGS = DeterministicFakeEmbedding(size=32)
 
@@ -389,7 +389,7 @@ class TestLearning:
         ui = harness("SELECT name FROM customer").index()
         ui.ask("list customers")
 
-        ui.button(sidebar=False, label="👍 Correct").click().run()
+        ui.button(sidebar=False, label="Correct").click().run()
 
         saved = json.loads((env / "examples.json").read_text())
         assert saved == [{
@@ -562,14 +562,14 @@ class TestNavigation:
         assert "Chat" in labels[0] and "Explorer" in labels[1] and "ER diagram" in labels[2]
         assert len(ui.at.chat_input) == 1
         assert not ui.at.title, "the big page title was replaced by a slim header"
-        assert any("SQL Copilot" in m.value for m in ui.at.sidebar.markdown)
+        assert any("SQL Copilot" in h.proto.body for h in ui.at.sidebar.get("html"))
 
     def test_brand_is_available_for_the_collapsed_sidebar(self, harness):
         ui = harness("SELECT 1")
 
         bodies = [h.proto.body for h in ui.at.get("html")]
-        assert any('<div class="sqlcopilot-brand">🗄️ SQL Copilot</div>' in b for b in bodies)
-        assert any("SQL Copilot" in m.value for m in ui.at.sidebar.markdown)
+        assert any('class="sqlcopilot-brand"' in b and "SQL Copilot" in b for b in bodies)
+        assert any("SQL Copilot" in h.proto.body for h in ui.at.sidebar.get("html"))
         css = " ".join(bodies)
         assert ".sqlcopilot-brand" in css
         assert 'aria-expanded="false"' in css, "shown only while the sidebar is collapsed"
@@ -734,7 +734,7 @@ class TestErDiagram:
 
         self.static(ui)
 
-        assert [d.proto.label for d in ui.at.get("download_button")] == ["⬇ Mermaid", "⬇ Graphviz"]
+        assert [d.proto.label for d in ui.at.get("download_button")] == ["Mermaid", "Graphviz"]
 
     def test_summary_is_shown_inside_the_viewer(self, harness):
         ui = self.open(harness("SELECT 1").index())

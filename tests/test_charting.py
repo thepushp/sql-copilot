@@ -56,3 +56,58 @@ def test_row_limits():
 
     assert chart_data(many) is None
     assert chart_data(too_many) is None
+
+
+class TestMakeChart:
+
+    def frame(self):
+        import pandas as pd
+        return pd.DataFrame({"city": ["a", "a", "b"], "total": [1, 2, 5], "kind": ["x", "y", "x"]})
+
+    def test_aggregates_repeated_labels(self):
+        from services.charting import chartable_columns, prepare_chart
+
+        frame = self.frame()
+        everything, numeric = chartable_columns(frame)
+
+        assert numeric == ["total"] and "city" in everything
+        tidy, x_type = prepare_chart(frame, "city", "total", "Bar", "Sum")
+        assert x_type == "nominal" and tidy.set_index("x")["y"].to_dict() == {"a": 3, "b": 5}
+        assert len(prepare_chart(frame, "city", "total")[0]) == 3
+
+    def test_split_by_keeps_a_series_column(self):
+        from services.charting import prepare_chart
+
+        tidy, _ = prepare_chart(self.frame(), "city", "total", "Bar", "Sum", "kind")
+        assert set(tidy["series"]) == {"x", "y"}
+
+    def test_every_kind_builds_a_chart(self):
+        from services.charting import CHART_KINDS, make_chart
+
+        for kind in CHART_KINDS:
+            x = "total" if kind == "Histogram" else "city"
+            assert make_chart(self.frame(), x, "total", kind, "Sum").to_dict()
+
+    def test_dates_are_temporal_and_numbers_are_not_forced_to_text(self):
+        import pandas as pd
+        from services.charting import prepare_chart
+
+        frame = pd.DataFrame({"day": pd.to_datetime(["2024-01-01", "2024-01-02"]), "n": [1, 2], "v": [3, 4]})
+        assert prepare_chart(frame, "day", "v", "Line")[1] == "temporal"
+        assert prepare_chart(frame, "n", "v", "Scatter")[1] == "quantitative"
+        assert prepare_chart(frame, "n", "v", "Bar")[1] == "nominal"
+
+    def test_many_categories_are_trimmed(self):
+        import pandas as pd
+        from services.charting import MAX_CATEGORIES, prepare_chart
+
+        frame = pd.DataFrame({"k": [str(i) for i in range(100)], "v": range(100)})
+        assert len(prepare_chart(frame, "k", "v", "Bar")[0]) == MAX_CATEGORIES
+
+    def test_rejects_non_numeric_y(self):
+        import pandas as pd
+        import pytest
+        from services.charting import make_chart
+
+        with pytest.raises(ValueError):
+            make_chart(pd.DataFrame({"a": ["x"], "b": ["y"]}), "a", "b", "Bar", "Sum")

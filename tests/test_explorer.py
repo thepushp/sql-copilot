@@ -503,7 +503,7 @@ class TestExport:
     def test_three_formats_are_offered(self, ui):
         self.prepare(ui)
 
-        assert [d.proto.label for d in ui.at.get("download_button")] == ["⬇ CSV", "⬇ JSON", "⬇ Excel"]
+        assert [d.proto.label for d in ui.at.get("download_button")] == ["CSV", "JSON", "Excel"]
 
     def test_the_whole_table_is_exported_not_just_the_page(self, ui):
         ready = self.prepare(ui)

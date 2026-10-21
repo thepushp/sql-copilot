@@ -11,5 +11,10 @@ gatherUsageStats = false
 # "viewer" remove Rerun. The Deploy button is hidden by a style rule in app.py.
 toolbarMode = "developer"
 
-[theme]
+# Defining both themes lets users pick Light / Dark / System in the menu
+# (three dots > Settings).
+[theme.light]
 primaryColor = "#2563eb"
+
+[theme.dark]
+primaryColor = "#60a5fa"

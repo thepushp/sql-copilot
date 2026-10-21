@@ -40,6 +40,8 @@ from services.glossary import expand_query, load_glossary, save_glossary
 from services.table_selector import select_tables
 from services.er_interactive import graph_data, viewer_height, viewer_html
 from ui.common import (
+    APP_ICON,
+    brand_html,
     NAV_CHAT,
     NAV_ER,
     NAV_EXPLORER,
@@ -95,9 +97,9 @@ ER_SHOW_LABELS = {
 BASE_CSS = """
 /* The app name appears in the empty top strip only while the sidebar (which
    shows it itself) is collapsed. */
-.sqlcopilot-brand { display: none; }
+.sqlcopilot-brand { display: none !important; }
 .stApp:has([data-testid="stSidebar"][aria-expanded="false"]) .sqlcopilot-brand {
-  display: block; position: fixed; top: 0.95rem; left: 3.6rem; z-index: 1000002;
+  display: flex !important; position: fixed; top: 0.95rem; left: 3.6rem; z-index: 1000002;
   font-weight: 600; white-space: nowrap; pointer-events: none;
 }
 /* Deploy targets Streamlit Community Cloud, which an open-source self-hosted
@@ -124,7 +126,7 @@ logger = get_logger("app")
 
 st.set_page_config(
     page_title="SQL Copilot",
-    page_icon="🗄️",
+    page_icon=APP_ICON,
     layout="wide",
 )
 
@@ -577,7 +579,7 @@ def render_model_settings():
 
         st.write("")
 
-        if st.button("↻", help="Refresh the model list"):
+        if st.button("", icon=":material/refresh:", help="Refresh the model list"):
 
             st.session_state.model_nonce += 1
 
@@ -709,7 +711,7 @@ def render_connection_form():
 
     if dialect.read_only_warning:
 
-        st.caption(f"⚠ {dialect.read_only_warning}")
+        st.caption(f":material/warning: {dialect.read_only_warning}")
 
     test, add = st.columns(2)
 
@@ -869,7 +871,7 @@ def render_sidebar():
 
     with st.sidebar:
 
-        st.markdown("### 🗄️ SQL Copilot")
+        st.html(brand_html(28))
 
         st.caption("Ask your database in plain English")
 
@@ -907,7 +909,7 @@ def render_sidebar():
         if get_dialect(datasource_config).read_only_warning:
 
             st.caption(
-                f"⚠ {get_dialect(datasource_config).read_only_warning}"
+                f":material/warning: {get_dialect(datasource_config).read_only_warning}"
             )
 
         if datasource_name in st.session_state.custom_datasources:
@@ -1103,7 +1105,7 @@ def render_message(message, index):
 
         elif message.get("clarify"):
 
-            st.info(f"💬 {message['content']}")
+            st.info(message["content"], icon=":material/help:")
 
         elif message.get("content"):
 
@@ -1143,15 +1145,17 @@ def render_message(message, index):
             with st.container(horizontal=True):
 
                 st.download_button(
-                    "⬇ CSV",
+                    "CSV",
                     rows.to_csv(index=False).encode("utf-8"),
                     file_name="result.csv",
                     mime="text/csv",
                     key=f"download_{index}",
+                    icon=":material/download:",
                 )
 
                 st.button(
-                    "✓ Saved" if message.get("approved") else "👍 Correct",
+                    "Saved" if message.get("approved") else "Correct",
+                    icon=":material/check:" if message.get("approved") else ":material/thumb_up:",
                     key=f"approve_{index}",
                     on_click=approve_message,
                     args=(index,),
@@ -1813,17 +1817,19 @@ def render_er_diagram():
                 st.caption(summary)
 
                 st.download_button(
-                    "⬇ Mermaid",
+                    "Mermaid",
                     mermaid,
                     file_name="er_diagram.mmd",
                     key="download_mermaid",
+                    icon=":material/download:",
                 )
 
                 st.download_button(
-                    "⬇ Graphviz",
+                    "Graphviz",
                     dot,
                     file_name="er_diagram.dot",
                     key="download_dot",
+                    icon=":material/download:",
                 )
 
             st.graphviz_chart(dot, width="stretch")
@@ -1972,7 +1978,7 @@ def main():
 
     st.html(f"<style>{BASE_CSS}</style>")
 
-    st.html('<div class="sqlcopilot-brand">🗄️ SQL Copilot</div>')
+    st.html(brand_html(20, "sqlcopilot-brand"))
 
     view = render_header(settings)
 

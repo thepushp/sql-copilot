@@ -248,7 +248,7 @@ class TestAppWritesTheAuditTrail:
     def test_examples_approvals_and_connections_are_recorded(self, ui, audit_log, shop_db):
         ui.index()
         ui.button(sidebar=False, label="How many rows are in orders?").click().run()
-        ui.button(sidebar=False, label="👍 Correct").click().run()
+        ui.button(sidebar=False, label="Correct").click().run()
         ui.widget("selectbox", key="conn_type").select("sqlite").run()
         ui.widget("text_input", key="conn_db").set_value(shop_db).run()
         ui.widget("text_input", key="conn_name").set_value("Copy").run()

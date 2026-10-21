@@ -9,6 +9,7 @@ import streamlit as st
 from database.query_executor import execute_query
 from database.sql_guard import validate_sql
 from services.audit import audit
+from services.charting import CHART_AGGREGATES, CHART_KINDS, chartable_columns, make_chart
 from services.data_profile import profile
 from services.er_diagram import (
     MAX_TABLES,
@@ -373,9 +374,9 @@ def render_data(settings, table, key):
 
     with st.container(horizontal=True, vertical_alignment="center"):
 
-        st.button("◀", on_click=_goto_page, args=(-1,), disabled=page == 0, key="data_prev", help="Previous page")
-        st.button("▶", on_click=_goto_page, args=(1,), disabled=not has_next, key="data_next", help="Next page")
-        st.button("↻", on_click=_refresh, key="data_refresh", help="Run the query again")
+        st.button("", icon=":material/chevron_left:", on_click=_goto_page, args=(-1,), disabled=page == 0, key="data_prev", help="Previous page")
+        st.button("", icon=":material/chevron_right:", on_click=_goto_page, args=(1,), disabled=not has_next, key="data_next", help="Next page")
+        st.button("", icon=":material/refresh:", on_click=_refresh, key="data_refresh", help="Run the query again")
 
         st.caption(
             f"Rows {page * page_size + 1:,}–{page * page_size + len(frame):,}"
@@ -404,6 +405,39 @@ def render_data(settings, table, key):
 
     with st.expander("Column statistics for this page"):
         st.dataframe(display_safe(profile(frame)), hide_index=True, width="stretch")
+
+    _render_chart(frame)
+
+
+def _render_chart(frame):
+
+    everything, numeric = chartable_columns(frame)
+
+    if not numeric:
+        return
+
+    with st.expander("Chart this page"):
+
+        kind = st.segmented_control("Type", CHART_KINDS, default=CHART_KINDS[0], key="chart_kind") or CHART_KINDS[0]
+
+        with st.container(horizontal=True, vertical_alignment="bottom", wrap=True):
+
+            x = st.selectbox("X axis" if kind != "Histogram" else "Column", everything, key="chart_x", width=180)
+
+            if kind != "Histogram":
+                y = st.selectbox("Y axis", numeric, key="chart_y", width=180)
+                aggregate = st.selectbox("Combine rows", CHART_AGGREGATES, key="chart_agg", width=140)
+                color = st.selectbox("Split by", ["(none)"] + everything, key="chart_color", width=180)
+            else:
+                y, aggregate, color = x, "None", "(none)"
+
+        try:
+            chart = make_chart(frame, x, y, kind, aggregate, None if color == "(none)" else color)
+        except ValueError as exc:
+            st.caption(str(exc))
+            return
+
+        st.altair_chart(chart, width="stretch")
 
 
 def _count_key(settings, key):
@@ -468,7 +502,7 @@ def _render_count_and_export(settings, table, key):
 
             for label, filename, mime, data in ready["files"]:
                 st.download_button(
-                    f"⬇ {label}", data, file_name=filename, mime=mime,
+                    label, data, file_name=filename, mime=mime, icon=":material/download:",
                     key=f"export_{label.lower()}", width="stretch",
                 )
 
@@ -543,7 +577,7 @@ def render_sql(settings, table, key, index):
     if not template.runnable:
         return
 
-    if st.button("▶ Run", key="sql_run"):
+    if st.button("Run", icon=":material/play_arrow:", key="sql_run"):
 
         result, error = _checked_run(settings, template.sql, 100)
 
