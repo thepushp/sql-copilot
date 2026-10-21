@@ -147,6 +147,8 @@ def build_dot(index, keys, mode="Keys only", include_inferred=True):
     keys = list(keys)
     key_set = set(keys)
 
+    multiple_schemas = len({index[key].schema for key in keys}) > 1
+
     lines = [
         "digraph ER {",
         '  rankdir=LR; nodesep=0.5; ranksep=1.0;',
@@ -173,7 +175,7 @@ def build_dot(index, keys, mode="Keys only", include_inferred=True):
 
         header = html.escape(table.name)
 
-        if table.schema != "public":
+        if multiple_schemas:
             header = f"{html.escape(table.schema)}.{header}"
 
         if table.kind != "table":

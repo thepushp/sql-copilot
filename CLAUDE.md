@@ -11,7 +11,7 @@ cp .env.example .env        # fill DB creds + provider API keys
 streamlit run app.py
 ```
 
-No tests, linter, or build step exist.
+No linter or build step exists. Tests: `pip install -r requirements-dev.txt && pytest` (see Tests below).
 
 ## Datasources and dialects
 
@@ -90,6 +90,16 @@ Empty placeholders (safe to delete): `config/settings.py`, `rag/vector_store.py`
 - Existing style: heavily vertical formatting with one argument per line, section banner comments, dataclasses for models, and no type hints on `app.py`. Match it when editing nearby code.
 - Keep the app schema-agnostic. Do not add table names or domain examples to prompts.
 - DML/DDL must stay review-only. Never execute non-READ SQL.
+
+## Tests
+
+`pytest` (config in `pytest.ini`, tests in `tests/`) runs in about 15s with no network, LLM, embedding download or PostgreSQL needed.
+
+- Unit tests per module: SQL guard (all dialects + privacy policy), dialects/URLs, metadata and relationship inference, privacy, Flyway, retrieval/ranking, query service, table selector, glossary, example store, charting, ER diagram, providers (HTTP and LLM factories mocked).
+- Database layer runs against a temporary SQLite file (`shop_db` fixture in `tests/conftest.py`), including DB-level read-only enforcement.
+- `tests/test_app.py` drives the real `app.py` through Streamlit's `AppTest` with a scripted stand-in model (`ScriptedLLM`), fake embeddings and SQLite as the only datasource, covering indexing, answering, repair, clarification, approval/reuse, glossary, privacy, the connection form and the ER tab. They patch `services.llm_service.get_llm`, `rag.embeddings.get_embeddings` and `DATASOURCES`, so they never touch a real database.
+- Optional PostgreSQL integration tests: `SQL_COPILOT_PG_TEST=1 pytest -m integration` (read-only against the first configured datasource).
+- MySQL, SQL Server and Oracle have URL, driver and guard tests only; no live-server tests.
 
 ## Git state
 
