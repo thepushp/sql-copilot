@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Streamlit app ("RAG DB Copilot") that turns natural-language questions into PostgreSQL SQL using schema-aware RAG, then executes read-only queries and shows results.
+Streamlit app ("RAG DB Copilot") that turns natural-language questions into SQL using schema-aware RAG, then executes read-only queries and shows results. Supports PostgreSQL, MySQL/MariaDB, SQL Server, SQLite and Oracle.
 
 ## Run
 
@@ -11,15 +11,24 @@ cp .env.example .env        # fill DB creds + provider API keys
 streamlit run app.py
 ```
 
-No tests, linter, or build step exist. Only PostgreSQL is supported (`postgresql+psycopg`).
+No tests, linter, or build step exist.
 
-## Datasources
+## Datasources and dialects
 
-Two sources: `.env` (DEV_DB_*/TEST_DB_*, always available) and the sidebar **Add a connection** form (host, port, database, username, password, SSL mode, Test button). UI connections live only in `st.session_state.custom_datasources` for that browser session; passwords are never written to disk and are not shared between sessions. The resolved config is passed explicitly (`inspect_database(name, config)`, `execute_query(name, sql, config)`); engines are cached by name plus credentials in `database/connection_manager.py`.
+Two sources: `.env` (DEV_DB_*/TEST_DB_*, always available) and the sidebar **Add a connection** form (database type, host, port, database, username, password, SSL mode for PostgreSQL, Test button). UI connections live only in `st.session_state.custom_datasources` for that browser session; passwords are never written to disk and are not shared between sessions. The resolved config is passed explicitly (`inspect_database(name, config)`, `execute_query(name, sql, config)`); engines are cached by name plus credentials in `database/connection_manager.py`.
+
+`database/dialects.py` holds one `Dialect` profile per database (`postgresql`, `mysql`, `mssql`, `sqlite`, `oracle`): SQLAlchemy URL scheme/driver (psycopg, pymysql, pymssql, oracledb, sqlite), default port, sqlglot dialect, system schemas, read-only/timeout setup statements run before every query, forbidden functions, row-limit hint and prompt notes. To add a database, add a profile there (and a driver to `requirements.txt`). The `driver` key in a datasource config (`DEV_DB_DRIVER`, `TEST_DB_DRIVER` in env) selects it; default is postgresql. For SQLite the "database" is a file path opened read-only; for Oracle it is the service name.
+
+Metadata: PostgreSQL uses the rich `pg_catalog` inspector (`_inspect_postgres`: comments, enum labels, `common_values` from `pg_stats`, materialized views, row estimates, partitions skipped). Other dialects use `database/generic_inspector.py` (SQLAlchemy reflection: tables, views, columns, PKs, FKs, indexes, comments where supported) with no sample values or row estimates. `inspect_database` dispatches, then applies Flyway state and relationship inference for all dialects.
+
+The SQL guard (`validate_sql(sql, policy, dialect_key)`), prompt (`{dialect_name}`, `{limit_hint}`, `{dialect_notes}`) and executor are dialect-aware. SQL Server has no read-only transaction, so a SELECT-only login is required there (the UI shows a warning).
+
+Tested against live servers: PostgreSQL and SQLite only. MySQL, SQL Server and Oracle are implemented from SQLAlchemy/sqlglot behavior and unit-checked (URLs, drivers load, guard matrix) but not run against real servers.
 
 ## Environment (.env)
 
 - `DEV_DB_*` / `TEST_DB_*`: HOST, PORT, NAME, USERNAME, PASSWORD (`*_SCHEMA` is in `.env.example` but never read).
+- `DEV_DB_DRIVER` / `TEST_DB_DRIVER`: postgresql (default), mysql, mssql, sqlite, oracle.
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OLLAMA_BASE_URL`.
 - `FLYWAY_MIGRATION_PATH`: optional, read in `database/database_inspector.py`. Missing from `.env.example`.
 - Never print or commit `.env`.
@@ -44,7 +53,7 @@ Two sources: `.env` (DEV_DB_*/TEST_DB_*, always available) and the sidebar **Add
 
 - `app.py`: Streamlit UI (sidebar, Chat tab, Database Explorer tab) and orchestration (`answer_question`).
 - `config/`: `datasource_config.py` (DEV/Test from env), `model_config.py` (providers, fallback model lists, context profiles), `privacy.py` (exclusions, `AccessPolicy`). `settings.py` is empty.
-- `database/`: connection pool, inspector, metadata dataclasses, SQL guard, executor.
+- `database/`: `dialects.py` (per-database profiles and URL builder), connection pool, `database_inspector.py` (PostgreSQL + dispatch), `generic_inspector.py` (other databases), metadata dataclasses, SQL guard, executor.
 - `flyway/`: migration parsing and object lifecycle state.
 - `rag/`: embeddings (configurable), FAISS index, hybrid retriever, context builder. `vector_store.py` is empty.
 - `services/`: `er_diagram.py`, `llm_service.py` (provider factory), `model_catalog.py` (live model lists), `query_service.py`, `table_selector.py`, `glossary.py`, `example_store.py`, `charting.py`.
@@ -63,7 +72,7 @@ Empty placeholders (safe to delete): `config/settings.py`, `rag/vector_store.py`
 
 - Guard (`database/sql_guard.py`): walks the whole tree, blocks nested writes (`WITH x AS (DELETE ...)`), a function denylist (`pg_sleep`, `dblink`, `lo_*`, `pg_read_file`, ...), and, via `AccessPolicy`, excluded tables/columns and `SELECT *` on tables with hidden columns.
 - Privacy (`config/privacy.py`): users can exclude schemas/tables and hide columns by pattern (defaults: password, secret, token, ssn, api_key). Excluded objects are removed from the index and enforced in the guard. Sample values can be turned off. Sample values and summaries are sent to the LLM, so review these before using cloud providers.
-- Executor: `SET TRANSACTION READ ONLY` plus a 30s `statement_timeout`. Still connect with a read-only DB role.
+- Executor: runs the dialect's setup statements first (PostgreSQL/Oracle/MySQL read-only transaction, SQLite `query_only` on a read-only file, statement timeouts where supported). Still connect with a read-only DB role.
 - Learning loop: only user-approved SQL is stored (question + SQL, no data) in `data/approved_queries.json` (git-ignored; override with `EXAMPLES_PATH`).
 
 ## Remaining weaknesses

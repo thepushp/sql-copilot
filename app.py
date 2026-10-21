@@ -14,6 +14,7 @@ from config.privacy import (
 )
 
 from database.connection_manager import get_engine
+from database.dialects import DIALECTS, get_dialect, is_configured
 from database.database_inspector import inspect_database
 from database.query_executor import execute_query
 from database.sql_guard import validate_sql
@@ -94,6 +95,7 @@ class RunSettings:
     summarize: bool
     smart_select: bool
     datasource_config: dict | None = None
+    dialect_key: str = "postgresql"
 
 
 def init_state():
@@ -136,31 +138,43 @@ def all_datasources():
     return merged
 
 
-def is_configured(config):
-
-    return bool(
-        config
-        and config.get("host")
-        and config.get("database")
-        and config.get("username")
-    )
-
-
 def _connection_from_form():
 
-    return {
-        "driver": "postgresql",
-        "host": st.session_state.get("conn_host", "").strip(),
-        "port": int(st.session_state.get("conn_port", 5432)),
+    dialect_key = st.session_state.get("conn_type", "postgresql")
+
+    dialect = get_dialect(dialect_key)
+
+    config = {
+        "driver": dialect_key,
+        "host": "",
+        "port": None,
         "database": st.session_state.get("conn_db", "").strip(),
-        "username": st.session_state.get("conn_user", "").strip(),
-        "password": st.session_state.get("conn_password", ""),
-        "sslmode": (
-            None
-            if st.session_state.get("conn_ssl", "default") == "default"
-            else st.session_state.conn_ssl
-        ),
+        "username": "",
+        "password": "",
+        "sslmode": None,
     }
+
+    if dialect.needs_host:
+
+        config.update(
+            host=st.session_state.get("conn_host", "").strip(),
+            port=int(
+                st.session_state.get(
+                    f"conn_port_{dialect_key}",
+                    dialect.default_port,
+                )
+            ),
+            username=st.session_state.get("conn_user", "").strip(),
+            password=st.session_state.get("conn_password", ""),
+        )
+
+    if dialect.supports_ssl_mode:
+
+        mode = st.session_state.get("conn_ssl", "default")
+
+        config["sslmode"] = None if mode == "default" else mode
+
+    return config
 
 
 def add_connection():
@@ -189,7 +203,7 @@ def add_connection():
 
         st.session_state.conn_message = (
             "error",
-            "Host, database and username are required.",
+            "Fill in all required connection fields.",
         )
 
         return
@@ -223,7 +237,7 @@ def test_connection(config, label):
 
     if not is_configured(config):
 
-        return "error", "Host, database and username are required."
+        return "error", "Fill in all required connection fields."
 
     try:
 
@@ -448,36 +462,55 @@ def render_connection_form():
         "the .env file."
     )
 
+    dialect_key = st.selectbox(
+        "Database type",
+        list(DIALECTS),
+        format_func=lambda key: DIALECTS[key].label,
+        key="conn_type",
+    )
+
+    dialect = DIALECTS[dialect_key]
+
     st.text_input("Connection name", key="conn_name", placeholder="Prod replica")
 
-    host, port = st.columns([3, 2])
+    if dialect.needs_host:
 
-    with host:
+        host, port = st.columns([3, 2])
 
-        st.text_input("Host", key="conn_host", value="localhost")
+        with host:
 
-    with port:
+            st.text_input("Host", key="conn_host", value="localhost")
 
-        st.number_input(
-            "Port",
-            key="conn_port",
-            min_value=1,
-            max_value=65535,
-            value=5432,
+        with port:
+
+            st.number_input(
+                "Port",
+                key=f"conn_port_{dialect_key}",
+                min_value=1,
+                max_value=65535,
+                value=dialect.default_port,
+            )
+
+    st.text_input(dialect.database_label, key="conn_db")
+
+    if dialect.needs_host:
+
+        st.text_input("Username", key="conn_user")
+
+        st.text_input("Password", key="conn_password", type="password")
+
+    if dialect.supports_ssl_mode:
+
+        st.selectbox(
+            "SSL mode",
+            SSL_MODES,
+            key="conn_ssl",
+            help="Use 'require' for most cloud databases.",
         )
 
-    st.text_input("Database", key="conn_db")
+    if dialect.read_only_warning:
 
-    st.text_input("Username", key="conn_user")
-
-    st.text_input("Password", key="conn_password", type="password")
-
-    st.selectbox(
-        "SSL mode",
-        SSL_MODES,
-        key="conn_ssl",
-        help="Use 'require' for most cloud databases.",
-    )
+        st.caption(f"⚠ {dialect.read_only_warning}")
 
     test, add = st.columns(2)
 
@@ -621,23 +654,35 @@ def render_sidebar():
         datasource_name = st.selectbox(
             "Datasource",
             list(datasources),
-            index=next(
-                (
-                    position
-                    for position, name in enumerate(datasources)
-                    if is_configured(datasources[name])
-                ),
-                0,
-            ),
             key="datasource_select",
+            **(
+                {}
+                if "datasource_select" in st.session_state
+                else {
+                    "index": next(
+                        (
+                            position
+                            for position, name in enumerate(datasources)
+                            if is_configured(datasources[name])
+                        ),
+                        0,
+                    )
+                }
+            ),
             format_func=lambda name: (
-                name
+                f"{name} · {get_dialect(datasources[name]).label}"
                 if is_configured(datasources[name])
                 else f"{name} (not configured)"
             ),
         )
 
         datasource_config = datasources[datasource_name]
+
+        if get_dialect(datasource_config).read_only_warning:
+
+            st.caption(
+                f"⚠ {get_dialect(datasource_config).read_only_warning}"
+            )
 
         if datasource_name in st.session_state.custom_datasources:
 
@@ -757,6 +802,7 @@ def render_sidebar():
         summarize=summarize,
         smart_select=smart_select,
         datasource_config=datasource_config,
+        dialect_key=get_dialect(datasource_config).key,
     )
 
 
@@ -1053,6 +1099,7 @@ def answer_question(question, history, settings, status):
             history=history,
             examples=examples,
             glossary=glossary,
+            dialect_key=settings.dialect_key,
         )
 
         add_usage(response)
@@ -1069,7 +1116,11 @@ def answer_question(question, history, settings, status):
 
             return message
 
-        validation = validate_sql(response.sql, policy)
+        validation = validate_sql(
+            response.sql,
+            policy,
+            settings.dialect_key,
+        )
 
         if not validation.allowed:
 
@@ -1103,11 +1154,16 @@ def answer_question(question, history, settings, status):
                     error=result.error,
                     examples=examples,
                     glossary=glossary,
+                    dialect_key=settings.dialect_key,
                 )
 
                 add_usage(repaired)
 
-                if validate_sql(repaired.sql, policy).allowed:
+                if validate_sql(
+                    repaired.sql,
+                    policy,
+                    settings.dialect_key,
+                ).allowed:
 
                     retry = execute_query(
                         settings.datasource_name,

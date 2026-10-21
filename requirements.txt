@@ -4,6 +4,9 @@ pandas
 
 sqlalchemy
 psycopg[binary]
+pymysql
+pymssql
+oracledb
 sqlglot
 
 faiss-cpu

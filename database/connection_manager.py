@@ -1,9 +1,10 @@
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
-from sqlalchemy.engine import URL, Engine
+from sqlalchemy.engine import Engine
 
 from config.datasource_config import DATASOURCES
+from database.dialects import build_url, get_dialect
 
 
 _engines: dict[tuple, Engine] = {}
@@ -13,6 +14,7 @@ def _cache_key(datasource_name, config):
 
     return (
         datasource_name,
+        config.get("driver"),
         config.get("host"),
         config.get("port"),
         config.get("database"),
@@ -34,11 +36,12 @@ def get_engine(
     if cache_key in _engines:
         return _engines[cache_key]
 
-    required = [
-        "host",
-        "database",
-        "username",
-    ]
+    dialect = get_dialect(config)
+
+    required = ["database"]
+
+    if dialect.needs_host:
+        required += ["host", "username"]
 
     missing = [
         key
@@ -53,25 +56,11 @@ def get_engine(
             + ", ".join(missing)
         )
 
-    url = URL.create(
-        "postgresql+psycopg",
-        username=config["username"],
-        password=config["password"] or None,
-        host=config["host"],
-        port=config["port"],
-        database=config["database"],
-        query=(
-            {"sslmode": config["sslmode"]}
-            if config.get("sslmode")
-            else {}
-        ),
-    )
-
     engine = create_engine(
-        url,
+        build_url(config),
         pool_pre_ping=True,
         pool_recycle=1800,
-        connect_args={"connect_timeout": 10},
+        connect_args=dict(dialect.connect_args),
     )
 
     _engines[cache_key] = engine

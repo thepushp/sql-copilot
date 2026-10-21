@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 
+from database.dialects import get_dialect
 from database.sql_guard import classify_sql
 from prompts.sql_prompt import (
     CLARIFY_PREFIX,
@@ -105,11 +106,16 @@ def clean_sql(raw: str) -> str:
 
 
 def _generate(
-    llm, question, context, history, examples, glossary=""
+    llm, question, context, history, examples, glossary="", dialect_key="postgresql"
 ) -> QueryResponse:
+
+    dialect = get_dialect(dialect_key)
 
     messages = SQL_PROMPT.invoke(
         {
+            "dialect_name": dialect.label,
+            "dialect_notes": dialect.notes,
+            "limit_hint": dialect.limit_hint,
             "context": context,
             "examples": examples or "None",
             "glossary": glossary.strip() or "None",
@@ -139,7 +145,7 @@ def _generate(
 
     return QueryResponse(
         sql=sql,
-        operation=classify_sql(sql),
+        operation=classify_sql(sql, dialect_key),
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )
@@ -152,9 +158,12 @@ def process_question(
     history=None,
     examples: str = "",
     glossary: str = "",
+    dialect_key: str = "postgresql",
 ) -> QueryResponse:
 
-    return _generate(llm, question, context, history, examples, glossary)
+    return _generate(
+        llm, question, context, history, examples, glossary, dialect_key
+    )
 
 
 def repair_question(
@@ -166,6 +175,7 @@ def repair_question(
     error: str,
     examples: str = "",
     glossary: str = "",
+    dialect_key: str = "postgresql",
 ) -> QueryResponse:
 
     turns = list(history or [])
@@ -174,13 +184,15 @@ def repair_question(
     turns.append(("ai", failed_sql))
 
     feedback = (
-        "That SQL failed with this PostgreSQL error:\n"
+        f"That SQL failed with this {get_dialect(dialect_key).label} error:\n"
         f"{error}\n\n"
         "Return a corrected single statement using only "
         "identifiers from the database context."
     )
 
-    return _generate(llm, feedback, context, turns, examples, glossary)
+    return _generate(
+        llm, feedback, context, turns, examples, glossary, dialect_key
+    )
 
 
 def summarize_result(llm, question: str, dataframe) -> tuple[str, int, int]:

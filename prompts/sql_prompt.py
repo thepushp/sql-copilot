@@ -10,11 +10,12 @@ CLARIFY_PREFIX = "CLARIFY:"
 
 
 SYSTEM_PROMPT = """
-You convert a user's request into exactly ONE PostgreSQL statement.
+You convert a user's request into exactly ONE {dialect_name} statement.
 
 IDENTIFIERS
 - Use only schemas, tables and columns present in the DATABASE CONTEXT.
-- Never invent identifiers or relationships. Qualify tables as schema.table.
+- Never invent identifiers or relationships. Qualify tables the way the
+  context shows them.
 - Tables marked "Flyway status: DROPPED / INACTIVE" must never be used.
 
 VALUES AND DESCRIPTIONS
@@ -52,7 +53,8 @@ COLUMNS
 
 READ QUERIES
 - Use SELECT or WITH ... SELECT only.
-- Add LIMIT 50 unless the user asks for a different size (max 500).
+- Limit rows: {limit_hint}. Use a different size only if the user asks
+  (max 500).
 
 WRITE QUERIES
 - If the user explicitly asks for INSERT/UPDATE/DELETE/DDL, you may
@@ -76,6 +78,9 @@ CLARIFYING QUESTIONS
 CONVERSATION
 - Earlier turns may contain previous requests and SQL. Use them to
   resolve follow-ups like "now only for 2024" or "sort that by name".
+
+DIALECT NOTES ({dialect_name})
+{dialect_notes}
 
 OUTPUT
 Return only the SQL statement. No markdown, comments or explanation.

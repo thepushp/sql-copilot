@@ -1,7 +1,10 @@
 from sqlalchemy import text
 import os
 
+from config.datasource_config import DATASOURCES
 from database.connection_manager import get_connection
+from database.dialects import get_dialect
+from database.generic_inspector import inspect_generic
 from database.schema_metadata import (
     ColumnMetadata,
     DatabaseMetadata,
@@ -28,7 +31,7 @@ MAX_VALUES_PER_COLUMN = 10
 MAX_VALUE_LENGTH = 40
 
 
-def inspect_database(
+def _inspect_postgres(
     datasource_name: str,
     config: dict | None = None,
 ) -> DatabaseMetadata:
@@ -457,11 +460,28 @@ def inspect_database(
         ),
     )
 
-    flyway_path = os.getenv(
-        "FLYWAY_MIGRATION_PATH"
-    )
+    return database_metadata
+
+
+def inspect_database(
+    datasource_name: str,
+    config: dict | None = None,
+) -> DatabaseMetadata:
+
+    config = config or DATASOURCES[datasource_name]
+
+    if get_dialect(config).key == "postgresql":
+
+        database_metadata = _inspect_postgres(datasource_name, config)
+
+    else:
+
+        database_metadata = inspect_generic(datasource_name, config)
+
+    flyway_path = os.getenv("FLYWAY_MIGRATION_PATH")
 
     if flyway_path:
+
         database_metadata = apply_flyway_state(
             database_metadata,
             flyway_path,
@@ -470,6 +490,7 @@ def inspect_database(
     infer_relationships(database_metadata)
 
     return database_metadata
+
 
 def apply_flyway_state(
     database_metadata: DatabaseMetadata,

@@ -3,6 +3,8 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import exp
 
+from database.dialects import get_dialect
+
 
 WRITE_NODES = (
     exp.Insert,
@@ -20,36 +22,17 @@ WRITE_NODES = (
     exp.Set,
 )
 
-BLOCKED_FUNCTIONS = {
-    "pg_sleep",
-    "pg_sleep_for",
-    "pg_sleep_until",
-    "pg_read_file",
-    "pg_read_binary_file",
-    "pg_ls_dir",
-    "pg_terminate_backend",
-    "pg_cancel_backend",
-    "set_config",
-    "dblink",
-    "dblink_exec",
-    "lo_import",
-    "lo_export",
-    "lo_unlink",
-    "query_to_xml",
-}
-
-
 @dataclass
 class SQLValidation:
     allowed: bool
     reason: str = ""
 
 
-def parse_sql(sql: str):
+def parse_sql(sql: str, read: str = "postgres"):
 
     statements = sqlglot.parse(
         sql,
-        read="postgres",
+        read=read,
     )
 
     if len(statements) != 1:
@@ -61,9 +44,9 @@ def parse_sql(sql: str):
     return statements[0]
 
 
-def classify_sql(sql: str) -> str:
+def classify_sql(sql: str, dialect_key: str = "postgresql") -> str:
 
-    tree = parse_sql(sql)
+    tree = parse_sql(sql, get_dialect(dialect_key).sqlglot)
 
     if isinstance(
         tree,
@@ -93,7 +76,7 @@ def classify_sql(sql: str) -> str:
             exp.Create,
             exp.Alter,
             exp.Drop,
-            exp.Truncate,
+            exp.TruncateTable,
         ),
     ):
         return "DDL"
@@ -171,7 +154,13 @@ def _check_policy(tree, policy):
     return None
 
 
-def validate_sql(sql: str, policy=None) -> SQLValidation:
+def validate_sql(
+    sql: str,
+    policy=None,
+    dialect_key: str = "postgresql",
+) -> SQLValidation:
+
+    dialect = get_dialect(dialect_key)
 
     if not sql or not sql.strip():
 
@@ -181,16 +170,16 @@ def validate_sql(sql: str, policy=None) -> SQLValidation:
         )
 
     try:
-        tree = parse_sql(sql)
+        tree = parse_sql(sql, dialect.sqlglot)
 
     except Exception as exc:
 
         return SQLValidation(
             False,
-            f"Invalid PostgreSQL SQL: {exc}",
+            f"Invalid {dialect.label} SQL: {exc}",
         )
 
-    operation = classify_sql(sql)
+    operation = classify_sql(sql, dialect_key)
 
     if operation != "READ":
 
@@ -215,6 +204,13 @@ def validate_sql(sql: str, policy=None) -> SQLValidation:
             ),
         )
 
+    if tree.find(exp.Lock):
+
+        return SQLValidation(
+            False,
+            "Locking reads (FOR UPDATE / FOR SHARE) are not allowed.",
+        )
+
     for function in tree.find_all(exp.Func):
 
         name = (
@@ -223,7 +219,7 @@ def validate_sql(sql: str, policy=None) -> SQLValidation:
             else function.sql_name()
         ).lower()
 
-        if name.split(".")[-1] in BLOCKED_FUNCTIONS:
+        if name.split(".")[-1] in dialect.forbidden_functions:
 
             return SQLValidation(
                 False,

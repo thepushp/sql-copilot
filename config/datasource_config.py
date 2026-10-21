@@ -2,6 +2,8 @@ import os
 
 from dotenv import load_dotenv
 
+from database.dialects import default_port
+
 
 load_dotenv()
 
@@ -17,63 +19,27 @@ def _env(
     )
 
 
+def _datasource(prefix: str) -> dict:
+
+    driver = _env(f"{prefix}_DB_DRIVER", "postgresql").strip().lower()
+
+    fallback_port = default_port(driver)
+
+    port = _env(f"{prefix}_DB_PORT") or (
+        str(fallback_port) if fallback_port else ""
+    )
+
+    return {
+        "driver": driver,
+        "host": _env(f"{prefix}_DB_HOST", "localhost"),
+        "port": int(port) if port else None,
+        "database": _env(f"{prefix}_DB_NAME"),
+        "username": _env(f"{prefix}_DB_USERNAME"),
+        "password": _env(f"{prefix}_DB_PASSWORD"),
+    }
+
+
 DATASOURCES = {
-
-    "Development": {
-
-        "driver": "postgresql",
-
-        "host": _env(
-            "DEV_DB_HOST",
-            "localhost",
-        ),
-
-        "port": int(
-            _env(
-                "DEV_DB_PORT",
-                "5432",
-            )
-        ),
-
-        "database": _env(
-            "DEV_DB_NAME"
-        ),
-
-        "username": _env(
-            "DEV_DB_USERNAME"
-        ),
-
-        "password": _env(
-            "DEV_DB_PASSWORD"
-        ),
-    },
-
-    "Test": {
-
-        "driver": "postgresql",
-
-        "host": _env(
-            "TEST_DB_HOST",
-            "localhost",
-        ),
-
-        "port": int(
-            _env(
-                "TEST_DB_PORT",
-                "5432",
-            )
-        ),
-
-        "database": _env(
-            "TEST_DB_NAME"
-        ),
-
-        "username": _env(
-            "TEST_DB_USERNAME"
-        ),
-
-        "password": _env(
-            "TEST_DB_PASSWORD"
-        ),
-    },
+    "Development": _datasource("DEV"),
+    "Test": _datasource("TEST"),
 }

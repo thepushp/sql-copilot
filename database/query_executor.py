@@ -4,9 +4,11 @@ import pandas as pd
 
 from sqlalchemy import text
 
+from config.datasource_config import DATASOURCES
 from database.connection_manager import (
     get_connection,
 )
+from database.dialects import get_dialect
 
 from models.query_result import QueryResult
 
@@ -24,6 +26,8 @@ def execute_query(
 
     started = time.perf_counter()
 
+    dialect = get_dialect(config or DATASOURCES.get(datasource_name))
+
     try:
 
         with get_connection(
@@ -31,16 +35,23 @@ def execute_query(
             config,
         ) as connection:
 
-            connection.execute(
-                text("SET TRANSACTION READ ONLY")
-            )
+            for statement, required in dialect.setup:
 
-            connection.execute(
-                text(
-                    "SET LOCAL statement_timeout = "
-                    f"{STATEMENT_TIMEOUT_MS}"
-                )
-            )
+                try:
+
+                    connection.execute(
+                        text(
+                            statement.format(
+                                ms=STATEMENT_TIMEOUT_MS,
+                                s=STATEMENT_TIMEOUT_MS // 1000,
+                            )
+                        )
+                    )
+
+                except Exception:
+
+                    if required:
+                        raise
 
             result = connection.execute(
                 text(sql)
