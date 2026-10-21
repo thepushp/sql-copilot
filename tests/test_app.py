@@ -141,13 +141,88 @@ class TestStartupAndIndexing:
         assert any(label.startswith("customer") for label in labels)
         assert any("big_orders  [view]" in label for label in labels)
 
-    def test_example_question_button_asks_it(self, harness):
-        ui = harness("SELECT name FROM customer").index()
+    def test_examples_come_from_the_schema_and_are_verified(self, harness):
+        ui = harness("SELECT 1").index()
 
-        ui.button(sidebar=False, label="How many rows are in each table?").click().run()
+        questions = [b.label for b in ui.at.main.button if b.key.startswith("example_")]
 
-        assert ui.messages[0]["content"] == "How many rows are in each table?"
-        assert ui.reply["role"] == "assistant"
+        assert len(questions) == 4
+        assert "How many rows are in orders?" in questions
+        assert "List orders together with their customer" in questions
+        assert not any(q.startswith("Show 10 recent records") for q in questions)
+
+    def test_clicking_an_example_answers_without_calling_the_model(self, harness):
+        ui = harness("SELECT 1").index()
+
+        ui.button(sidebar=False, label="How many rows are in orders?").click().run()
+
+        assert ui.llm.calls == []
+        assert ui.messages[0] == {"role": "user", "content": "How many rows are in orders?"}
+        assert ui.reply["example"] is True
+        assert ui.reply["rows"]["total"].tolist() == [3]
+        assert ui.reply["input_tokens"] == 0
+        assert ui.reply["tables"] == ["main.orders"]
+
+    def test_example_answers_work_with_follow_up_questions(self, harness):
+        ui = harness("SELECT 1").index()
+        ui.button(sidebar=False, label="How many rows are in orders?").click().run()
+
+        ui.ask("and for customers?")
+
+        assert 'SELECT COUNT(*) AS total FROM "orders"' in ui.llm.calls[-1]
+
+    def test_examples_disappear_once_chatting(self, harness):
+        ui = harness("SELECT 1").index()
+
+        ui.ask("anything")
+
+        assert not [b for b in ui.at.main.button if b.key.startswith("example_")]
+
+    def test_examples_respect_privacy_settings(self, harness):
+        ui = harness("SELECT 1").index()
+        ui.widget("multiselect", label="Exclude tables").select("main.orders").select("main.order_item").run()
+
+        ui.button("Apply privacy settings").click().run()
+
+        sql = [e.sql for e in ui.at.session_state.example_questions]
+        assert sql
+        for statement in sql:
+            assert '"orders"' not in statement
+            assert '"order_item"' not in statement
+
+    def test_examples_are_rebuilt_for_a_new_datasource(self, harness, tmp_path):
+        import sqlite3
+
+        path = tmp_path / "tiny.db"
+        con = sqlite3.connect(path)
+        con.executescript("CREATE TABLE gadget(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO gadget VALUES (1,'a');")
+        con.close()
+        ui = harness("SELECT 1")
+        ui.widget("selectbox", key="conn_type").select("sqlite").run()
+        ui.widget("text_input", key="conn_db").set_value(str(path)).run()
+        ui.widget("text_input", key="conn_name").set_value("Tiny").run()
+        ui.button(key="conn_add").click().run()
+
+        ui.index()
+
+        questions = [b.label for b in ui.at.main.button if b.key.startswith("example_")]
+        assert "How many rows are in gadget?" in questions
+
+    def test_empty_database_has_no_examples_but_still_works(self, harness, tmp_path):
+        import sqlite3
+
+        path = tmp_path / "empty.db"
+        sqlite3.connect(path).executescript("CREATE TABLE gadget(id INTEGER PRIMARY KEY);")
+        ui = harness("SELECT 1")
+        ui.widget("selectbox", key="conn_type").select("sqlite").run()
+        ui.widget("text_input", key="conn_db").set_value(str(path)).run()
+        ui.widget("text_input", key="conn_name").set_value("Empty").run()
+        ui.button(key="conn_add").click().run()
+
+        ui.index()
+
+        assert not [b for b in ui.at.main.button if b.key.startswith("example_")]
+        assert not ui.at.chat_input[0].disabled
 
 
 class TestAnswering:

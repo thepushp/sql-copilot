@@ -45,6 +45,10 @@ from services.er_diagram import (
     schema_tables,
     table_index,
 )
+from services.example_questions import (
+    build_candidates,
+    verify_examples,
+)
 from services.example_store import (
     add_example,
     find_similar,
@@ -66,13 +70,6 @@ SSL_MODES = ["default", "disable", "prefer", "require", "verify-full"]
 
 EXPLORER_TABLE_LIMIT = 50
 CUSTOM_MODEL = "Custom..."
-
-EXAMPLE_QUESTIONS = [
-    "How many rows are in each table?",
-    "Show 10 recent records from the largest table",
-    "Which tables reference each other?",
-]
-
 
 st.set_page_config(
     page_title="RAG DB Copilot",
@@ -110,6 +107,8 @@ def init_state():
         "indexed_datasource": None,
         "index_embedding_model": None,
         "pending_question": None,
+        "pending_example": None,
+        "example_questions": [],
         "model_nonce": 0,
         "custom_datasources": {},
     }
@@ -252,6 +251,71 @@ def test_connection(config, label):
     return "success", "Connection works."
 
 
+def refresh_example_questions():
+    """Build example questions from the schema and keep only those that work."""
+
+    st.session_state.example_questions = []
+
+    metadata = st.session_state.database_metadata
+    name = st.session_state.indexed_datasource
+
+    if not metadata or not name:
+        return
+
+    config = all_datasources().get(name)
+    dialect_key = get_dialect(config).key
+    policy = st.session_state.access_policy
+
+    try:
+
+        with st.spinner("Preparing example questions..."):
+
+            st.session_state.example_questions = verify_examples(
+                build_candidates(metadata, dialect_key),
+                lambda sql: execute_query(name, sql, config),
+                lambda sql: validate_sql(sql, policy, dialect_key).allowed,
+            )
+
+    except Exception:
+
+        st.session_state.example_questions = []
+
+
+def run_example(example, settings):
+    """Run a verified example directly; no model call is needed."""
+
+    message = {
+        "role": "assistant",
+        "question": example.question,
+        "datasource": settings.datasource_name,
+        "sql": example.sql,
+        "tables": example.tables,
+        "example": True,
+        "input_tokens": 0,
+        "output_tokens": 0,
+    }
+
+    result = execute_query(
+        settings.datasource_name,
+        example.sql,
+        settings.datasource_config,
+    )
+
+    if result.error:
+
+        message["error"] = f"The query failed: {result.error}"
+
+        return message
+
+    message["rows"] = result.rows
+    message["row_count"] = result.row_count
+    message["content"] = (
+        f"**{result.row_count} rows** in {result.execution_ms:.0f} ms"
+    )
+
+    return message
+
+
 def rebuild_index(embedding_model):
 
     filtered, policy = apply_privacy(
@@ -293,6 +357,8 @@ def index_database(datasource_name, embedding_model, config=None):
             return
 
     st.session_state.messages = []
+
+    refresh_example_questions()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -638,6 +704,8 @@ def render_privacy(embedding_model):
 
             rebuild_index(embedding_model)
 
+        refresh_example_questions()
+
         st.toast("Privacy settings applied.")
 
         st.rerun()
@@ -934,6 +1002,10 @@ def render_message(message, index):
                 )
 
         details = []
+
+        if message.get("example"):
+
+            details.append("Verified example, answered without the model")
 
         if message.get("examples_used"):
 
@@ -1250,15 +1322,26 @@ def render_chat(datasource_name, busy):
 
     elif not st.session_state.messages:
 
-        st.markdown("**Ask a question below, or try one of these:**")
+        examples = st.session_state.example_questions
 
-        for example in EXAMPLE_QUESTIONS:
+        if examples:
 
-            if st.button(example, key=f"example_{example}"):
+            st.markdown(
+                "**Ask a question below, or try one of these.** "
+                "They run instantly on your data, without calling the model:"
+            )
 
-                st.session_state.pending_question = example
+            for position, example in enumerate(examples):
 
-                st.rerun()
+                if st.button(example.question, key=f"example_{position}"):
+
+                    st.session_state.pending_example = position
+
+                    st.rerun()
+
+        else:
+
+            st.markdown("**Ask a question about your database below.**")
 
     for index, message in enumerate(st.session_state.messages):
 
@@ -1544,6 +1627,10 @@ def main():
 
     st.session_state.pending_question = None
 
+    example_position = st.session_state.pending_example
+
+    st.session_state.pending_example = None
+
     with tab_explorer:
 
         render_explorer()
@@ -1554,7 +1641,35 @@ def main():
 
     with tab_chat:
 
-        render_chat(datasource_name, busy=bool(question))
+        render_chat(
+            datasource_name,
+            busy=bool(question) or example_position is not None,
+        )
+
+        if example_position is not None and indexed:
+
+            examples = st.session_state.example_questions
+
+            if example_position < len(examples):
+
+                example = examples[example_position]
+
+                user_message = {"role": "user", "content": example.question}
+
+                st.session_state.messages.append(user_message)
+
+                render_message(
+                    user_message,
+                    len(st.session_state.messages) - 1,
+                )
+
+                with st.spinner("Running example..."):
+
+                    reply = run_example(example, settings)
+
+                st.session_state.messages.append(reply)
+
+                st.rerun()
 
         if question and indexed:
 

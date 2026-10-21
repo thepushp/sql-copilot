@@ -46,7 +46,8 @@ Tested against live servers: PostgreSQL and SQLite only. MySQL, SQL Server and O
    - `process_question()` (`services/query_service.py`) calls the LLM with chat history. Output may be SQL, `CLARIFY: <question>` (shown as a chat question, `NeedsClarification`) or `CANNOT_GENERATE_SQL` (`NoSQLGenerated`).
    - Non-READ SQL is shown but never executed. READ goes through `validate_sql(sql, policy)`, `execute_query()`, and one automatic repair attempt on error (`repair_question`).
    - Optional result summary (`summarize_result`, off by default because it sends the first 20 rows to the model).
-5. ER Diagram tab (`services/er_diagram.py`): builds Graphviz DOT (rendered by `st.graphviz_chart`, no system install) and Mermaid `erDiagram` export from the filtered metadata. Modes: around a table (BFS by relationship depth), whole schema (best-connected first, capped at 40 tables), or the tables used by the last answer. Inferred relationships are dashed.
+5. Landing-page examples (`services/example_questions.py`): after indexing (and after privacy changes) the app builds candidate questions with SQL from the filtered metadata (row count, group-by on a column with known values, FK join with the parent's label column, most recent rows, first rows), builds the SQL with sqlglot for the active dialect, runs each through the safety guard and the database, and keeps up to four that really return data (one per kind first). Tables over 2M estimated rows are not scanned. Clicking one runs its verified SQL directly (`run_example`), so it needs no model; the answer is flagged `example` and joins the chat history.
+6. ER Diagram tab (`services/er_diagram.py`): builds Graphviz DOT (rendered by `st.graphviz_chart`, no system install) and Mermaid `erDiagram` export from the filtered metadata. Modes: around a table (BFS by relationship depth), whole schema (best-connected first, capped at 40 tables), or the tables used by the last answer. Inferred relationships are dashed.
 6. `render_message()` shows the answer: summary, table/chart tabs (`services/charting.py`), SQL expander, CSV download, "Correct" button (saves the example to `data/approved_queries.json`), token usage and tables considered.
 
 ## Layout
@@ -56,7 +57,7 @@ Tested against live servers: PostgreSQL and SQLite only. MySQL, SQL Server and O
 - `database/`: `dialects.py` (per-database profiles and URL builder), connection pool, `database_inspector.py` (PostgreSQL + dispatch), `generic_inspector.py` (other databases), metadata dataclasses, SQL guard, executor.
 - `flyway/`: migration parsing and object lifecycle state.
 - `rag/`: embeddings (configurable), FAISS index, hybrid retriever, context builder. `vector_store.py` is empty.
-- `services/`: `er_diagram.py`, `llm_service.py` (provider factory), `model_catalog.py` (live model lists), `query_service.py`, `table_selector.py`, `glossary.py`, `example_store.py`, `charting.py`.
+- `services/`: `example_questions.py`, `er_diagram.py`, `llm_service.py` (provider factory), `model_catalog.py` (live model lists), `query_service.py`, `table_selector.py`, `glossary.py`, `example_store.py`, `charting.py`.
 - `prompts/sql_prompt.py`: SQL system prompt and result-summary prompt.
 - `models/query_result.py`: `QueryResult` dataclass. `models/datasource.py` is empty.
 
