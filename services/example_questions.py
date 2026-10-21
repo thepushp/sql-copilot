@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from sqlglot import exp
 
 from database.dialects import get_dialect
+from services import sql_builders
 from rag.retriever import DERIVED_MARKERS
 from rag.textutil import matches, words
 
@@ -30,48 +31,12 @@ class ExampleQuestion:
     tables: list[str] = field(default_factory=list)
 
 
-def _ident(name, dialect_key):
-
-    if dialect_key == "oracle":
-        quoted = name != name.lower() or not re.fullmatch(r"\w+", name)
-    else:
-        quoted = True
-
-    return exp.Identifier(this=name, quoted=quoted)
-
-
-def _table(table, dialect_key, alias=None):
-
-    schema = None if dialect_key == "sqlite" else table.schema
-
-    return exp.Table(
-        this=_ident(table.name, dialect_key),
-        db=_ident(schema, dialect_key) if schema else None,
-        alias=exp.TableAlias(this=exp.to_identifier(alias)) if alias else None,
-    )
-
-
-def _column(name, dialect_key, alias=None):
-
-    return exp.Column(
-        this=_ident(name, dialect_key),
-        table=exp.to_identifier(alias) if alias else None,
-    )
-
-
-def _sql(query, dialect_key):
-
-    return query.sql(dialect=get_dialect(dialect_key).sqlglot)
-
-
-def _readable(name):
-
-    return name.replace("_", " ")
-
-
-def _key(table):
-
-    return f"{table.schema}.{table.name}"
+_ident = sql_builders.ident
+_table = sql_builders.table_ref
+_column = sql_builders.column_ref
+_sql = sql_builders.to_sql
+_readable = sql_builders.readable
+_key = sql_builders.table_key
 
 
 def _is_large(table):
@@ -129,24 +94,7 @@ def _rank_tables(metadata):
     return sorted(tables, key=score, reverse=True)
 
 
-def _label_column(table):
-
-    columns = _usable_columns(table)
-
-    for wanted in _LABEL_NAMES:
-        for column in columns:
-            if column.name.lower() == wanted and _TEXT_TYPES.search(column.data_type):
-                return column
-
-    for column in columns:
-        if (
-            _TEXT_TYPES.search(column.data_type)
-            and not column.primary_key
-            and not column.name.lower().endswith("_id")
-        ):
-            return column
-
-    return None
+_label_column = sql_builders.label_column
 
 
 def _preview_columns(table):
@@ -192,7 +140,7 @@ def _group_example(table, column, dialect_key):
         exp.select(group_column, exp.alias_(exp.Count(this=exp.Star()), "total"))
         .from_(_table(table, dialect_key))
         .group_by(_column(column.name, dialect_key))
-        .order_by(exp.Ordered(this=exp.column("total"), desc=True))
+        .order_by(sql_builders.ordered("total", True, dialect_key))
     )
 
     return ExampleQuestion(
@@ -223,40 +171,9 @@ def _recent_example(table, column, dialect_key):
 
 def _join_example(child, fk, parent, label, dialect_key):
 
-    own = [
-        c for c in _preview_columns(child)
-        if c.name != fk.column and not c.name.lower().endswith("_id")
-    ][:3]
-
-    selected = [_column(c.name, dialect_key, "c") for c in own] or [
-        _column(fk.column, dialect_key, "c")
-    ]
-
-    selected.append(
-        exp.alias_(
-            _column(label.name, dialect_key, "p"),
-            f"{parent.name}_{label.name}",
-            quoted=False,
-        )
-    )
-
-    query = (
-        exp.select(*selected)
-        .from_(_table(child, dialect_key, "c"))
-        .join(
-            _table(parent, dialect_key, "p"),
-            on=exp.EQ(
-                this=_column(fk.column, dialect_key, "c"),
-                expression=_column(fk.foreign_column, dialect_key, "p"),
-            ),
-            join_type="inner",
-        )
-        .limit(PREVIEW_ROWS)
-    )
-
     return ExampleQuestion(
         f"List {_readable(child.name)} together with their {_readable(parent.name)}",
-        _sql(query, dialect_key),
+        sql_builders.join_query(child, fk, parent, label, dialect_key, PREVIEW_ROWS),
         "join",
         [_key(child), _key(parent)],
     )

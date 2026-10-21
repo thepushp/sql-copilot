@@ -25,9 +25,13 @@ def execute_query(
     datasource_name: str,
     sql: str,
     config: dict | None = None,
+    max_rows: int | None = None,
 ) -> QueryResult:
 
     started = time.perf_counter()
+
+    if max_rows is None:
+        max_rows = MAX_ROWS
 
     dialect = get_dialect(config or DATASOURCES.get(datasource_name))
 
@@ -63,7 +67,7 @@ def execute_query(
             ).execute(text(sql))
 
             rows = result.fetchmany(
-                MAX_ROWS
+                max_rows
             )
 
             column_names = make_unique_column_names(

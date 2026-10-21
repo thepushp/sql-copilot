@@ -126,12 +126,13 @@ class TestStartupAndIndexing:
         assert not ui.at.chat_input[0].disabled
         assert [b.label for b in ui.at.main.button]  # example questions
 
-    def test_explorer_lists_tables(self, harness):
+    def test_explorer_lists_tables_and_views(self, harness):
         ui = harness("SELECT 1").index().goto(EXPLORER)
-        labels = [e.label for e in ui.at.expander]
+        keys = {b.key for b in ui.at.main.button if b.key.startswith("nav_")}
 
-        assert any(label.startswith("customer") for label in labels)
-        assert any("big_orders  [view]" in label for label in labels)
+        assert {"nav_main.customer", "nav_main.orders", "nav_main.big_orders"} <= keys
+        labels = {b.key: b.label for b in ui.at.main.button if b.key.startswith("nav_")}
+        assert "view" in labels["nav_main.big_orders"]
 
     def test_examples_come_from_the_schema_and_are_verified(self, harness):
         ui = harness("SELECT 1").index()
@@ -684,7 +685,7 @@ class TestErDiagram:
 
         assert ui.seg("er_mode").options == ["Around table", "Schema", "Last answer"]
         assert ui.radio("er_columns").options == ["Keys only", "All columns", "Names only"]
-        assert ui.radio("er_columns").value == "Keys only"
+        assert ui.radio("er_columns").value == "All columns"
         assert ui.radio("er_view").options == ["Interactive", "Static (Graphviz)"]
         assert ui.toggle("er_inferred").value is True
         assert ui.at.get("iframe")[0].proto.srcdoc
@@ -693,14 +694,14 @@ class TestErDiagram:
         ui = self.open(harness("SELECT 1").index())
         labels = [p.proto.popover.label for p in ui.at.get("popover")]
 
-        assert "Columns: Keys only" in labels
+        assert "Columns: All columns" in labels
         assert "View: Interactive" in labels
 
-        ui.radio("er_columns").set_value("All columns").run()
+        ui.radio("er_columns").set_value("Keys only").run()
         ui.radio("er_view").set_value("Static (Graphviz)").run()
         labels = [p.proto.popover.label for p in ui.at.get("popover")]
 
-        assert "Columns: All columns" in labels
+        assert "Columns: Keys only" in labels
         assert "View: Static" in labels
 
     def test_there_is_no_vague_options_menu(self, harness):
@@ -787,6 +788,21 @@ class TestErDiagram:
         ui.toggle("er_inferred").set_value(False).run()
 
         assert not any(e["inferred"] for e in self.interactive(ui)["edges"])
+
+    def test_whole_schema_includes_unconnected_tables_by_default(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        self.mode(ui, "Whole schema")
+
+        metadata = ui.at.session_state["database_metadata"]
+        every_table = {
+            f"{schema.name}.{table.name}"
+            for schema in metadata.schemas
+            for table in schema.tables
+            if schema.name == ui.at.session_state["er_schema"]
+        }
+
+        assert ui.toggle("er_hide_isolated").value is False
+        assert {t["id"] for t in self.interactive(ui)["tables"]} == every_table
 
     def test_depth_slider_widens_the_neighbourhood(self, harness):
         ui = self.open(harness("SELECT 1").index())

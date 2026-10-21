@@ -38,8 +38,18 @@ from services.charting import chart_data
 from services.glossary import expand_query, load_glossary, save_glossary
 from services.table_selector import select_tables
 from services.er_interactive import graph_data, viewer_height, viewer_html
+from ui.common import (
+    NAV_CHAT,
+    NAV_ER,
+    NAV_EXPLORER,
+    NAV_OPTIONS,
+    current_theme as _theme,
+    show_html,
+)
+from ui.explorer import render_explorer
 from services.er_diagram import (
     COLUMN_MODES,
+    DEFAULT_COLUMN_MODE,
     MAX_TABLES,
     build_dot,
     build_mermaid,
@@ -71,11 +81,6 @@ from services.query_service import (
 
 SSL_MODES = ["default", "disable", "prefer", "require", "verify-full"]
 
-NAV_CHAT = "💬 Chat"
-NAV_EXPLORER = "🌳 Explorer"
-NAV_ER = "🔗 ER diagram"
-NAV_OPTIONS = [NAV_CHAT, NAV_EXPLORER, NAV_ER]
-
 ER_VIEWS = ["Interactive", "Static (Graphviz)"]
 
 ER_SHOW_LABELS = {
@@ -97,10 +102,18 @@ BASE_CSS = """
 /* Deploy targets Streamlit Community Cloud, which an open-source self-hosted
    tool does not use. The three-dot menu (Rerun, ...) stays. */
 [data-testid="stAppDeployButton"] { display: none !important; }
+/* The explorer's table list reads like a file tree: left-aligned, one line each. */
+.st-key-explorer_nav button { justify-content: flex-start; padding: 0.2rem 0.6rem; min-height: 2rem; }
+.st-key-explorer_nav button > div, .st-key-explorer_nav button > div > span {
+  justify-content: flex-start; width: 100%; min-width: 0;
+}
+.st-key-explorer_nav button p {
+  display: block; max-width: 100%; margin: 0; text-align: left; font-size: 0.85rem;
+  line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .block-container { padding-top: 4.5rem !important; padding-bottom: 1rem !important; }
 """
 
-EXPLORER_TABLE_LIMIT = 50
 CUSTOM_MODEL = "Custom..."
 
 configure_logging()
@@ -396,6 +409,10 @@ def run_example(example, settings):
     return message
 
 
+class NothingToIndex(ValueError):
+    pass
+
+
 def rebuild_index(embedding_model):
 
     filtered, policy = apply_privacy(
@@ -403,8 +420,18 @@ def rebuild_index(embedding_model):
         st.session_state.privacy,
     )
 
+    documents = filtered.to_documents()
+
+    if not documents:
+
+        raise NothingToIndex(
+            "There are no tables to index. Check that this user can read at "
+            "least one table, and that the privacy settings do not exclude "
+            "everything."
+        )
+
     index = build_schema_index(
-        filtered.to_documents(),
+        documents,
         get_embeddings(embedding_model),
     )
 
@@ -793,6 +820,8 @@ def render_privacy(embedding_model):
 
     if st.button("Apply privacy settings", width="stretch"):
 
+        previous = st.session_state.privacy
+
         st.session_state.privacy = PrivacySettings(
             excluded_schemas=excluded_schemas,
             excluded_tables=excluded_tables,
@@ -805,9 +834,19 @@ def render_privacy(embedding_model):
             hide_infrastructure=hide_infrastructure,
         )
 
-        with st.spinner("Rebuilding index..."):
+        try:
 
-            rebuild_index(embedding_model)
+            with st.spinner("Rebuilding index..."):
+
+                rebuild_index(embedding_model)
+
+        except NothingToIndex as exc:
+
+            st.session_state.privacy = previous
+
+            st.error(f"Not applied: {exc}")
+
+            return
 
         refresh_example_questions()
 
@@ -1541,101 +1580,6 @@ def render_chat(datasource_name, busy):
         render_message(message, index)
 
 
-def render_explorer():
-
-    metadata = st.session_state.database_metadata
-
-    if not metadata:
-
-        st.info("Index the database to browse its schema.")
-
-        return
-
-    with st.container(horizontal=True, vertical_alignment="bottom", wrap=True):
-
-        schema_name = st.selectbox(
-            "Schema",
-            [schema.name for schema in metadata.schemas],
-            key="explorer_schema",
-            width=260,
-        )
-
-        search = st.text_input(
-            "Filter tables",
-            placeholder="e.g. student",
-            key="explorer_filter",
-            width=320,
-        ).strip().lower()
-
-        count_slot = st.container(width="content")
-
-    schema = next(
-        schema
-        for schema in metadata.schemas
-        if schema.name == schema_name
-    )
-
-    tables = [
-        table
-        for table in schema.tables
-        if search in table.name.lower()
-    ]
-
-    with count_slot:
-
-        st.caption(f"{len(tables)} tables")
-
-    for table in tables[:EXPLORER_TABLE_LIMIT]:
-
-        with st.expander(
-            f"{table.name}"
-            + (
-                f"  [{table.kind}]"
-                if table.kind != "table"
-                else ""
-            )
-            + f"  ({len(table.columns)} columns)"
-        ):
-
-            if table.comment:
-
-                st.caption(table.comment)
-
-            st.dataframe(
-                [
-                    {
-                        "Column": column.name,
-                        "Type": column.data_type,
-                        "Nullable": column.nullable,
-                        "Default": column.default,
-                        "PK": "✓" if column.primary_key else "",
-                        "Values": ", ".join(column.values),
-                        "Description": column.comment or "",
-                    }
-                    for column in table.columns
-                ],
-                width="stretch",
-                hide_index=True,
-            )
-
-            for fk in table.foreign_keys:
-
-                kind = "inferred" if fk.inferred else "FK"
-
-                st.write(
-                    f"`{fk.column}` → "
-                    f"`{fk.foreign_schema}.{fk.foreign_table}."
-                    f"{fk.foreign_column}` ({kind})"
-                )
-
-    if len(tables) > EXPLORER_TABLE_LIMIT:
-
-        st.caption(
-            f"Showing the first {EXPLORER_TABLE_LIMIT}. "
-            "Use the filter to narrow down."
-        )
-
-
 def _last_answer_tables():
 
     for message in reversed(st.session_state.messages):
@@ -1645,31 +1589,6 @@ def _last_answer_tables():
             return message["tables"]
 
     return []
-
-
-def show_html(html, height):
-    """Embed generated HTML (only ever built from escaped data in er_interactive)."""
-
-    if hasattr(st, "iframe"):
-
-        st.iframe(html, height=height)
-
-    else:
-
-        import streamlit.components.v1 as components
-
-        components.html(html, height=height)
-
-
-def _theme():
-
-    try:
-
-        return getattr(st.context.theme, "type", None)
-
-    except Exception:
-
-        return None
 
 
 def render_er_diagram():
@@ -1695,9 +1614,9 @@ def render_er_diagram():
         view_slot = st.container(width="content")
 
     # The buttons show the current choice, so nothing has to be opened to see it.
-    hide_isolated = True
+    hide_isolated = False
 
-    columns_now = st.session_state.get("er_columns", COLUMN_MODES[0])
+    columns_now = st.session_state.get("er_columns", DEFAULT_COLUMN_MODE)
     view_now = st.session_state.get("er_view", ER_VIEWS[0])
 
     with columns_slot:
@@ -1712,6 +1631,7 @@ def render_er_diagram():
                     "Every column (very long tables are trimmed)",
                     "Just the table names",
                 ],
+                index=COLUMN_MODES.index(DEFAULT_COLUMN_MODE),
                 key="er_columns",
             )
 
@@ -1743,7 +1663,7 @@ def render_er_diagram():
 
                 hide_isolated = st.toggle(
                     "Hide tables without relationships",
-                    value=True,
+                    value=False,
                     key="er_hide_isolated",
                 )
 
@@ -1826,7 +1746,7 @@ def render_er_diagram():
 
         st.info(
             "No tables to show. This schema has no relationships; "
-            "turn off \"Hide unconnected\" to list its tables."
+            "turn off \"Hide tables without relationships\" to list its tables."
             if mode == "Whole schema"
             else "No tables to show for this selection."
         )
@@ -2059,7 +1979,7 @@ def main():
     # not redraw the diagram on every message.
     if view == NAV_EXPLORER:
 
-        render_explorer()
+        render_explorer(settings)
 
     elif view == NAV_ER:
 

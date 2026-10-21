@@ -7,6 +7,7 @@ MAX_TABLES = 40
 MAX_COLUMNS = 25
 
 COLUMN_MODES = ("Keys only", "All columns", "Names only")
+DEFAULT_COLUMN_MODE = "All columns"
 
 
 def table_index(metadata):

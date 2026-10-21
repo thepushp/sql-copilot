@@ -87,6 +87,15 @@ class TestExecutor:
 
         assert result.row_count == 2
 
+    def test_the_caller_can_ask_for_a_different_number_of_rows(self, shop_config):
+        assert execute_query("shop", "SELECT * FROM order_item", shop_config, max_rows=1).row_count == 1
+        assert execute_query("shop", "SELECT * FROM order_item", shop_config, max_rows=1000).row_count == 3
+
+    def test_the_default_cap_follows_the_module_setting(self, shop_config, monkeypatch):
+        monkeypatch.setattr(query_executor, "MAX_ROWS", 1)
+
+        assert execute_query("shop", "SELECT * FROM order_item", shop_config).row_count == 1
+
     def test_duplicate_column_names_are_made_unique(self, shop_config):
         result = execute_query("shop", "SELECT 1 AS a, 2 AS a, 3 AS a", shop_config)
 

@@ -16,6 +16,11 @@ Ask questions about your database in plain English and get SQL, results, charts 
 - **Privacy controls:** exclude schemas/tables, hide columns by pattern, turn off sample values
 - **Results:** table, chart, CSV download, optional plain-language summary
 - **Clean, compact interface:** a slim header with Chat / Explorer / ER diagram sections (the app name moves to the top strip when the sidebar is collapsed), toolbars that wrap on narrow windows, light and dark theme support, and a diagram canvas that uses the rest of the window
+- **Explorer:** a navigator with search across every schema (table names, column names, comments, known values) next to a table page with four sections:
+  - **Properties:** columns, types, keys and what they point to, indexes, and clickable "references" and "referenced by" lists to move between related tables
+  - **Data:** a paged, sortable, filterable view of the rows with column statistics, a row count on demand, and export to CSV, JSON or Excel (up to 10,000 rows)
+  - **Diagram:** the table and its neighbours, with a shortcut to the full ER diagram
+  - **SQL:** ready-made SQL for the table (select, count, group, joins through relationships) that you can run, plus insert / update / delete / CREATE TABLE statements for review only
 - **Interactive ER diagrams:** around a table, a whole schema, or the tables behind your last answer. Click a column, a relationship line or a table header to highlight how it connects to other tables (click a primary key to see every table that references it). The Columns and View dropdowns say what they control and what is currently chosen. **Export** saves a PNG image (twice the on-screen size, whole diagram), an SVG, or Mermaid / Graphviz text; image exports match what you see, including any highlight and the light or dark theme
 - **Audit log:** a local record of what was asked and what SQL ran (never the data)
 
@@ -69,7 +74,7 @@ Connect either in the sidebar (kept in your browser session only, never written 
    | SQLite | yes (file opened read-only) | no |
    | SQL Server | **no** (the SQL checker and your login's permissions are the only barrier) | lock timeout only |
 
-3. At most 500 rows are returned and large results are streamed, so a huge result does not fill memory.
+3. Chat answers return at most 500 rows and large results are streamed, so a huge result does not fill memory. The Explorer's data view fetches one page at a time with the same safety check and privacy rules; hidden columns and excluded tables never appear in it or in its exports.
 
 These are safeguards, not guarantees. **Always connect with a database user that only has `SELECT` permission**, ideally on a replica.
 
