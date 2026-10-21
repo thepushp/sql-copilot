@@ -5,3 +5,10 @@ address = "127.0.0.1"
 
 [browser]
 gatherUsageStats = false
+
+[client]
+# Hides the "Deploy" button; keeps the settings menu.
+toolbarMode = "minimal"
+
+[theme]
+primaryColor = "#2563eb"

@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>__CSS__</style>
+</head>
+<body>
+<div id="bar">
+  <div id="info">
+    <div id="hint">Click a column, line or table header to highlight its relationships.</div>
+    <div id="selected" hidden></div>
+    <div id="lines" hidden></div>
+  </div>
+  <div id="summary"></div>
+  <div class="tools">
+    <button id="zoom-out" title="Zoom out">&minus;</button>
+    <button id="zoom-in" title="Zoom in">+</button>
+    <button id="fit" title="Fit to width">Fit</button>
+    <button id="clear" title="Clear selection (Esc)">Clear</button>
+  </div>
+</div>
+<div id="stage"><svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<script type="application/json" id="er-data">__DATA__</script>
+<script>__JS__</script>
+</body>
+</html>

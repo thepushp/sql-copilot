@@ -16,7 +16,8 @@ jobs:
           python-version: "3.14"
           cache: pip
           cache-dependency-path: requirements.lock
-      - run: pip install -r requirements.lock pytest
+      # Playwright drives the Chrome that GitHub's Ubuntu runners already have
+      - run: pip install -r requirements.lock pytest playwright
       - run: pytest
 
   latest-dependencies:

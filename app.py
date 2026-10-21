@@ -37,6 +37,7 @@ from services.audit import audit, configure_logging, get_logger
 from services.charting import chart_data
 from services.glossary import expand_query, load_glossary, save_glossary
 from services.table_selector import select_tables
+from services.er_interactive import graph_data, viewer_height, viewer_html
 from services.er_diagram import (
     COLUMN_MODES,
     MAX_TABLES,
@@ -70,6 +71,23 @@ from services.query_service import (
 
 SSL_MODES = ["default", "disable", "prefer", "require", "verify-full"]
 
+NAV_CHAT = "💬 Chat"
+NAV_EXPLORER = "🌳 Explorer"
+NAV_ER = "🔗 ER diagram"
+NAV_OPTIONS = [NAV_CHAT, NAV_EXPLORER, NAV_ER]
+
+ER_SHOW_LABELS = {
+    "Around a table": "Around table",
+    "Whole schema": "Schema",
+    "Tables from last answer": "Last answer",
+}
+
+# Tighter page padding, and the status text right-aligned. Only touches
+# layout, never content.
+BASE_CSS = """
+.block-container { padding-top: 4.5rem !important; padding-bottom: 1rem !important; }
+"""
+
 EXPLORER_TABLE_LIMIT = 50
 CUSTOM_MODEL = "Custom..."
 
@@ -79,7 +97,7 @@ logger = get_logger("app")
 
 
 st.set_page_config(
-    page_title="RAG DB Copilot",
+    page_title="SQL Copilot",
     page_icon="🗄️",
     layout="wide",
 )
@@ -799,7 +817,11 @@ def render_sidebar():
 
     with st.sidebar:
 
-        st.header("Setup")
+        st.markdown("### 🗄️ SQL Copilot")
+
+        st.caption("Ask your database in plain English")
+
+        st.divider()
 
         datasources = all_datasources()
 
@@ -1066,9 +1088,7 @@ def render_message(message, index):
 
         if rows is not None and not rows.empty:
 
-            download, approve, _ = st.columns([1, 1, 3])
-
-            with download:
+            with st.container(horizontal=True):
 
                 st.download_button(
                     "⬇ CSV",
@@ -1077,8 +1097,6 @@ def render_message(message, index):
                     mime="text/csv",
                     key=f"download_{index}",
                 )
-
-            with approve:
 
                 st.button(
                     "✓ Saved" if message.get("approved") else "👍 Correct",
@@ -1479,18 +1497,28 @@ def render_chat(datasource_name, busy):
 
         if examples:
 
-            st.markdown(
-                "**Ask a question below, or try one of these.** "
-                "They run instantly on your data, without calling the model:"
-            )
+            with st.container(border=True):
 
-            for position, example in enumerate(examples):
+                st.markdown(
+                    "**Try an example.** Runs instantly on your data, "
+                    "no model needed. Or ask your own question below."
+                )
 
-                if st.button(example.question, key=f"example_{position}"):
+                columns = st.columns(2)
 
-                    st.session_state.pending_example = position
+                for position, example in enumerate(examples):
 
-                    st.rerun()
+                    with columns[position % 2]:
+
+                        if st.button(
+                            example.question,
+                            key=f"example_{position}",
+                            width="stretch",
+                        ):
+
+                            st.session_state.pending_example = position
+
+                            st.rerun()
 
         else:
 
@@ -1511,17 +1539,23 @@ def render_explorer():
 
         return
 
-    schema_name = st.selectbox(
-        "Schema",
-        [schema.name for schema in metadata.schemas],
-        key="explorer_schema",
-    )
+    with st.container(horizontal=True, vertical_alignment="bottom", wrap=True):
 
-    search = st.text_input(
-        "Filter tables",
-        placeholder="e.g. student",
-        key="explorer_filter",
-    ).strip().lower()
+        schema_name = st.selectbox(
+            "Schema",
+            [schema.name for schema in metadata.schemas],
+            key="explorer_schema",
+            width=260,
+        )
+
+        search = st.text_input(
+            "Filter tables",
+            placeholder="e.g. student",
+            key="explorer_filter",
+            width=320,
+        ).strip().lower()
+
+        count_slot = st.container(width="content")
 
     schema = next(
         schema
@@ -1535,7 +1569,9 @@ def render_explorer():
         if search in table.name.lower()
     ]
 
-    st.caption(f"{len(tables)} tables")
+    with count_slot:
+
+        st.caption(f"{len(tables)} tables")
 
     for table in tables[:EXPLORER_TABLE_LIMIT]:
 
@@ -1599,6 +1635,31 @@ def _last_answer_tables():
     return []
 
 
+def show_html(html, height):
+    """Embed generated HTML (only ever built from escaped data in er_interactive)."""
+
+    if hasattr(st, "iframe"):
+
+        st.iframe(html, height=height)
+
+    else:
+
+        import streamlit.components.v1 as components
+
+        components.html(html, height=height)
+
+
+def _theme():
+
+    try:
+
+        return getattr(st.context.theme, "type", None)
+
+    except Exception:
+
+        return None
+
+
 def render_er_diagram():
 
     metadata = st.session_state.database_metadata
@@ -1611,33 +1672,60 @@ def render_er_diagram():
 
     index = table_index(metadata)
 
-    left, right = st.columns([2, 3])
+    # Controls keep their natural width and wrap onto a second row when the
+    # window is narrow, instead of being squeezed.
+    with st.container(horizontal=True, vertical_alignment="bottom", wrap=True):
 
-    with left:
+        show_slot = st.container(width="content")
+        pick_slot = st.container(width="content")
+        extra_slot = st.container(width="content")
+        tools_slot = st.container(width="content")
 
-        mode = st.radio(
+    with tools_slot:
+
+        options_popover = st.popover("⚙ Options")
+
+        with options_popover:
+
+            detail = st.segmented_control(
+                "Columns",
+                COLUMN_MODES,
+                default="Keys only",
+                required=True,
+                key="er_columns",
+            )
+
+            er_view = st.segmented_control(
+                "View",
+                ["Interactive", "Static (Graphviz)"],
+                default="Interactive",
+                required=True,
+                key="er_view",
+                help=(
+                    "Interactive: click a column, a line or a table header "
+                    "to highlight its relationships."
+                ),
+            )
+
+            include_inferred = st.toggle(
+                "Show inferred relationships (dashed)",
+                value=True,
+                key="er_inferred",
+                help=(
+                    "Relationships guessed from <name>_id columns, as "
+                    "opposed to real foreign keys."
+                ),
+            )
+
+    with show_slot:
+
+        mode = st.segmented_control(
             "Show",
-            ["Around a table", "Whole schema", "Tables from last answer"],
+            list(ER_SHOW_LABELS),
+            default="Around a table",
+            required=True,
             key="er_mode",
-        )
-
-    with right:
-
-        detail = st.radio(
-            "Columns",
-            COLUMN_MODES,
-            horizontal=True,
-            key="er_columns",
-        )
-
-        include_inferred = st.checkbox(
-            "Include inferred relationships (dashed)",
-            value=True,
-            key="er_inferred",
-            help=(
-                "Relationships guessed from <name>_id columns, as opposed "
-                "to real foreign keys."
-            ),
+            format_func=ER_SHOW_LABELS.get,
         )
 
     keys = []
@@ -1646,14 +1734,19 @@ def render_er_diagram():
 
         options = sorted(index)
 
-        start = st.selectbox(
-            "Table",
-            options,
-            index=options.index(most_connected(index, include_inferred)),
-            key="er_table",
-        )
+        with pick_slot:
 
-        hops = st.slider("Relationship depth", 1, 3, 1, key="er_depth")
+            start = st.selectbox(
+                "Table",
+                options,
+                index=options.index(most_connected(index, include_inferred)),
+                key="er_table",
+                width=210,
+            )
+
+        with extra_slot:
+
+            hops = st.slider("Depth", 1, 3, 1, key="er_depth", width=150)
 
         keys = expand_around(index, start, hops, include_inferred)
 
@@ -1661,25 +1754,31 @@ def render_er_diagram():
 
         schema_names = [schema.name for schema in metadata.schemas]
 
-        schema = st.selectbox(
-            "Schema",
-            schema_names,
-            index=schema_names.index(
-                max(
-                    schema_names,
-                    key=lambda name: len(
-                        schema_tables(index, name, include_inferred)
-                    ),
-                )
-            ),
-            key="er_schema",
-        )
+        with pick_slot:
 
-        hide_isolated = st.checkbox(
-            "Hide tables without relationships",
-            value=True,
-            key="er_hide_isolated",
-        )
+            schema = st.selectbox(
+                "Schema",
+                schema_names,
+                index=schema_names.index(
+                    max(
+                        schema_names,
+                        key=lambda name: len(
+                            schema_tables(index, name, include_inferred)
+                        ),
+                    )
+                ),
+                key="er_schema",
+                width=210,
+            )
+
+        with extra_slot:
+
+            hide_isolated = st.toggle(
+                "Hide unconnected",
+                value=True,
+                key="er_hide_isolated",
+                help="Hide tables that have no relationships.",
+            )
 
         keys = schema_tables(
             index,
@@ -1698,72 +1797,138 @@ def render_er_diagram():
 
             return
 
+        with pick_slot:
+
+            st.caption("Tables used by your last question")
+
     if not keys:
 
         st.info(
             "No tables to show. This schema has no relationships; "
-            "untick \"Hide tables without relationships\" to list its tables."
+            "turn off \"Hide unconnected\" to list its tables."
             if mode == "Whole schema"
             else "No tables to show for this selection."
         )
 
         return
 
-    if len(keys) > MAX_TABLES:
+    total = len(keys)
 
-        st.warning(
-            f"{len(keys)} tables match; showing the first {MAX_TABLES}. "
-            "Reduce the depth or pick a smaller scope."
-        )
+    if total > MAX_TABLES:
 
         keys = keys[:MAX_TABLES]
 
-    st.caption(f"{len(keys)} tables")
+    shown = len(keys)
+
+    data = graph_data(
+        index,
+        keys,
+        detail,
+        include_inferred,
+        focus=keys[0],
+        theme=_theme(),
+    )
+
+    summary = f"{shown} tables · {len(data['edges'])} relationships"
+
+    if total > shown:
+
+        summary = (
+            f"showing {shown} of {total} tables "
+            f"· {len(data['edges'])} relationships"
+        )
+
+    data["summary"] = summary
 
     dot = build_dot(index, keys, detail, include_inferred)
 
-    st.graphviz_chart(dot, width="stretch")
+    with options_popover:
 
-    with st.expander("Export"):
+        st.divider()
 
-        mermaid = build_mermaid(index, keys, detail, include_inferred)
+        st.caption("Export this diagram")
 
-        st.code(mermaid, language="text")
+        st.download_button(
+            "⬇ Mermaid (.mmd)",
+            build_mermaid(index, keys, detail, include_inferred),
+            file_name="er_diagram.mmd",
+            key="download_mermaid",
+            width="stretch",
+        )
 
-        first, second = st.columns(2)
+        st.download_button(
+            "⬇ Graphviz (.dot)",
+            dot,
+            file_name="er_diagram.dot",
+            key="download_dot",
+            width="stretch",
+        )
 
-        with first:
+    # Small diagrams get a compact frame; larger ones use the rest of the window.
+    frame_height = (
+        "max(420px, calc(100vh - 250px))"
+        if len(keys) > 4
+        else f"{viewer_height(len(keys))}px"
+    )
 
-            st.download_button(
-                "⬇ Mermaid (.mmd)",
-                mermaid,
-                file_name="er_diagram.mmd",
-                key="download_mermaid",
+    with st.container(key="er_canvas"):
+
+        st.html(
+            f"<style>.st-key-er_canvas iframe {{ height: {frame_height} "
+            "!important; }</style>"
+        )
+
+        if er_view == "Interactive":
+
+            show_html(viewer_html(data), height=viewer_height(len(keys)))
+
+        else:
+
+            st.caption(summary)
+
+            st.graphviz_chart(dot, width="stretch")
+
+
+def render_header(settings):
+    """Slim top bar: section switcher on the left, connection status on the right."""
+
+    metadata = st.session_state.database_metadata
+
+    with st.container(
+        horizontal=True,
+        vertical_alignment="center",
+        horizontal_alignment="distribute",
+        wrap=True,
+    ):
+
+        view = st.segmented_control(
+            "Section",
+            NAV_OPTIONS,
+            default=NAV_CHAT,
+            required=True,
+            key="nav",
+            label_visibility="collapsed",
+        )
+
+        if is_indexed(settings.datasource_name) and metadata:
+
+            st.caption(
+                f"{settings.datasource_name} · "
+                f"{get_dialect(settings.datasource_config).label} · "
+                f"{metadata.table_count} tables, "
+                f"{metadata.view_count} views"
             )
 
-        with second:
+        else:
 
-            st.download_button(
-                "⬇ Graphviz (.dot)",
-                dot,
-                file_name="er_diagram.dot",
-                key="download_dot",
-            )
+            st.caption("Not indexed yet. Use the sidebar to get started.")
+
+    return view or NAV_CHAT
 
 
-def main():
-
-    init_state()
-
-    settings = render_sidebar()
+def render_chat_view(settings):
 
     datasource_name = settings.datasource_name
-
-    st.title("🗄️ RAG Database Copilot")
-
-    tab_chat, tab_explorer, tab_er = st.tabs(
-        ["💬 Chat", "🌳 Database Explorer", "🔗 ER Diagram"]
-    )
 
     indexed = is_indexed(datasource_name)
 
@@ -1784,60 +1949,20 @@ def main():
 
     st.session_state.pending_example = None
 
-    with tab_explorer:
+    render_chat(
+        datasource_name,
+        busy=bool(question) or example_position is not None,
+    )
 
-        render_explorer()
+    if example_position is not None and indexed:
 
-    with tab_er:
+        examples = st.session_state.example_questions
 
-        render_er_diagram()
+        if example_position < len(examples):
 
-    with tab_chat:
+            example = examples[example_position]
 
-        render_chat(
-            datasource_name,
-            busy=bool(question) or example_position is not None,
-        )
-
-        if example_position is not None and indexed:
-
-            examples = st.session_state.example_questions
-
-            if example_position < len(examples):
-
-                example = examples[example_position]
-
-                user_message = {"role": "user", "content": example.question}
-
-                st.session_state.messages.append(user_message)
-
-                render_message(
-                    user_message,
-                    len(st.session_state.messages) - 1,
-                )
-
-                with st.spinner("Running example..."):
-
-                    reply = run_example(example, settings)
-
-                st.session_state.messages.append(reply)
-
-                st.rerun()
-
-        if question and indexed:
-
-            if not settings.model:
-
-                st.warning("Choose or enter a model in the sidebar.")
-
-                return
-
-            history = build_history(
-                st.session_state.messages,
-                settings.profile["history_turns"],
-            )
-
-            user_message = {"role": "user", "content": question}
+            user_message = {"role": "user", "content": example.question}
 
             st.session_state.messages.append(user_message)
 
@@ -1846,27 +1971,82 @@ def main():
                 len(st.session_state.messages) - 1,
             )
 
-            with st.chat_message("assistant"):
+            with st.spinner("Running example..."):
 
-                with st.status("Working...", expanded=False) as status:
-
-                    reply = answer_question(
-                        question,
-                        history,
-                        settings,
-                        status,
-                    )
-
-                    failed = bool(reply.get("error"))
-
-                    status.update(
-                        label="Failed" if failed else "Done",
-                        state="error" if failed else "complete",
-                    )
+                reply = run_example(example, settings)
 
             st.session_state.messages.append(reply)
 
             st.rerun()
+
+    if question and indexed:
+
+        if not settings.model:
+
+            st.warning("Choose or enter a model in the sidebar.")
+
+            return
+
+        history = build_history(
+            st.session_state.messages,
+            settings.profile["history_turns"],
+        )
+
+        user_message = {"role": "user", "content": question}
+
+        st.session_state.messages.append(user_message)
+
+        render_message(
+            user_message,
+            len(st.session_state.messages) - 1,
+        )
+
+        with st.chat_message("assistant"):
+
+            with st.status("Working...", expanded=False) as status:
+
+                reply = answer_question(
+                    question,
+                    history,
+                    settings,
+                    status,
+                )
+
+                failed = bool(reply.get("error"))
+
+                status.update(
+                    label="Failed" if failed else "Done",
+                    state="error" if failed else "complete",
+                )
+
+        st.session_state.messages.append(reply)
+
+        st.rerun()
+
+
+def main():
+
+    init_state()
+
+    settings = render_sidebar()
+
+    st.html(f"<style>{BASE_CSS}</style>")
+
+    view = render_header(settings)
+
+    # Only the active section is built, so switching away from the chat does
+    # not redraw the diagram on every message.
+    if view == NAV_EXPLORER:
+
+        render_explorer()
+
+    elif view == NAV_ER:
+
+        render_er_diagram()
+
+    else:
+
+        render_chat_view(settings)
 
 
 main()

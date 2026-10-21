@@ -19,6 +19,10 @@ from services import example_store, glossary
 
 pytestmark = pytest.mark.app
 
+CHAT = "💬 Chat"
+EXPLORER = "🌳 Explorer"
+ER = "🔗 ER diagram"
+
 EMBEDDINGS = DeterministicFakeEmbedding(size=32)
 
 APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
@@ -52,6 +56,17 @@ class Harness:
     def widget(self, kind, label=None, key=None):
         pool = getattr(self.at.sidebar, kind)
         return next(w for w in pool if (label and w.label == label) or (key and w.key == key))
+
+    def seg(self, key):
+        return next(c for c in self.at.segmented_control if c.key == key)
+
+    def toggle(self, key):
+        return next(t for t in self.at.toggle if t.key == key)
+
+    def goto(self, section):
+        self.seg("nav").set_value(section).run()
+        assert not self.at.exception, self.at.exception
+        return self
 
     def has(self, kind, label):
         return any(w.label == label for w in getattr(self.at.sidebar, kind))
@@ -109,7 +124,7 @@ class TestStartupAndIndexing:
         assert [b.label for b in ui.at.main.button]  # example questions
 
     def test_explorer_lists_tables(self, harness):
-        ui = harness("SELECT 1").index()
+        ui = harness("SELECT 1").index().goto(EXPLORER)
         labels = [e.label for e in ui.at.expander]
 
         assert any(label.startswith("customer") for label in labels)
@@ -532,54 +547,247 @@ class TestConnectionForm:
         assert any("read-only" in c.value for c in ui.at.sidebar.caption)
 
 
+class TestNavigation:
+
+    def test_starts_on_chat_with_a_slim_header(self, harness):
+        ui = harness("SELECT 1")
+
+        assert ui.seg("nav").value == CHAT
+        labels = ui.seg("nav").options
+        assert len(labels) == 3
+        assert "Chat" in labels[0] and "Explorer" in labels[1] and "ER diagram" in labels[2]
+        assert len(ui.at.chat_input) == 1
+        assert not ui.at.title, "the big page title was replaced by a slim header"
+        assert any("SQL Copilot" in m.value for m in ui.at.sidebar.markdown)
+
+    def test_header_shows_the_connection_once_indexed(self, harness):
+        ui = harness("SELECT 1")
+        assert any("Not indexed yet" in c.value for c in ui.at.caption)
+
+        ui.index()
+
+        assert any("Shop · SQLite · 4 tables, 1 views" in c.value for c in ui.at.caption)
+
+    def test_the_chat_box_exists_only_in_the_chat_section(self, harness):
+        ui = harness("SELECT 1").index()
+
+        ui.goto(EXPLORER)
+        assert len(ui.at.chat_input) == 0
+
+        ui.goto(ER)
+        assert len(ui.at.chat_input) == 0
+
+        ui.goto(CHAT)
+        assert len(ui.at.chat_input) == 1
+
+    def test_only_the_active_section_is_built(self, harness):
+        ui = harness("SELECT 1").index()
+        assert not ui.at.get("iframe") and not ui.at.main.expander
+
+        ui.goto(ER)
+        assert ui.at.get("iframe")
+
+        ui.goto(CHAT)
+        assert not ui.at.get("iframe")
+
+    def test_the_conversation_survives_switching_sections(self, harness):
+        ui = harness("SELECT name FROM customer").index()
+        ui.ask("list customers")
+
+        ui.goto(ER)
+        ui.goto(EXPLORER)
+        ui.goto(CHAT)
+
+        assert [m["role"] for m in ui.messages] == ["user", "assistant"]
+        assert ui.messages[-1]["rows"].shape[0] == 2
+
+    def test_examples_are_laid_out_in_a_grid_of_buttons(self, harness):
+        ui = harness("SELECT 1").index()
+
+        examples = [b for b in ui.at.main.button if b.key.startswith("example_")]
+
+        assert len(examples) == 4
+
+    def test_asking_from_the_chat_works_after_visiting_other_sections(self, harness):
+        ui = harness("SELECT name FROM customer").index()
+        ui.goto(ER)
+        ui.goto(CHAT)
+
+        assert ui.ask("list customers")["rows"].shape[0] == 2
+
+
 class TestErDiagram:
 
-    def graph(self, ui):
+    def open(self, ui):
+        return ui.goto(ER)
+
+    def frames(self, ui):
+        return ui.at.get("iframe")
+
+    def interactive(self, ui):
+        """The graph data embedded in the interactive viewer, or None."""
+
+        import re
+
+        frames = self.frames(ui)
+
+        if not frames:
+            return None
+
+        match = re.search(
+            r'<script type="application/json" id="er-data">(.*?)</script>',
+            frames[0].proto.srcdoc,
+            re.S,
+        )
+
+        return json.loads(match.group(1))
+
+    def static(self, ui):
+        ui.seg("er_view").set_value("Static (Graphviz)").run()
         charts = ui.at.get("graphviz_chart")
         return charts[0].proto.spec if charts else None
 
+    def mode(self, ui, name):
+        ui.seg("er_mode").set_value(name).run()
+
     def test_needs_an_index(self, harness):
-        ui = harness("SELECT 1")
+        ui = self.open(harness("SELECT 1"))
 
-        assert self.graph(ui) is None
+        assert self.interactive(ui) is None
+        assert any("Index the database" in i.value for i in ui.at.info)
 
-    def test_default_view_is_valid_dot_around_the_best_connected_table(self, harness):
-        ui = harness("SELECT 1").index()
-        dot = self.graph(ui)
+    def test_interactive_is_the_default_view(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        data = self.interactive(ui)
+
+        assert ui.seg("er_view").value == "Interactive"
+        assert not ui.at.get("graphviz_chart")
+        assert len(data["tables"]) >= 3
+        assert len(data["edges"]) >= 2
+        assert data["focus"] == "main.customer"
+
+    def test_toolbar_controls(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+
+        assert ui.seg("er_mode").options == ["Around table", "Schema", "Last answer"]
+        assert ui.seg("er_columns").value == "Keys only"
+        assert ui.toggle("er_inferred").value is True
+        assert ui.at.get("iframe")[0].proto.srcdoc
+
+    def test_summary_is_shown_inside_the_viewer(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        data = self.interactive(ui)
+
+        assert data["summary"] == f"{len(data['tables'])} tables · {len(data['edges'])} relationships"
+
+    def test_viewer_follows_the_theme_when_known(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+
+        assert self.interactive(ui)["theme"] in (None, "light", "dark")
+
+    def test_viewer_embeds_the_script_and_styles(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        html = self.frames(ui)[0].proto.srcdoc
+
+        assert "<svg" in html and "textContent" in html
+        assert "__CSS__" not in html and "__JS__" not in html and "__DATA__" not in html
+
+    def test_static_view_is_valid_dot(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        dot = self.static(ui)
 
         assert dot.startswith("digraph ER") and dot.rstrip().endswith("}")
         assert dot.count("[label=<<TABLE") >= 3
         assert dot.count(" -> ") >= 2
+        assert not self.frames(ui)
+        assert any("tables ·" in c.value for c in ui.at.caption)
 
     @pytest.mark.parametrize("mode", ["Whole schema", "Around a table"])
-    def test_modes_render(self, harness, mode):
-        ui = harness("SELECT 1").index()
+    def test_modes_render_in_both_views(self, harness, mode):
+        ui = self.open(harness("SELECT 1").index())
 
-        next(r for r in ui.at.radio if r.key == "er_mode").set_value(mode).run()
-
+        self.mode(ui, mode)
         assert not ui.at.exception
-        assert self.graph(ui)
+        assert self.interactive(ui)["tables"]
+
+        assert self.static(ui)
+
+    def test_columns_option_changes_what_is_shown(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+
+        ui.seg("er_columns").set_value("Names only").run()
+
+        assert all(t["columns"] == [] for t in self.interactive(ui)["tables"])
+
+    def test_inferred_relationships_can_be_hidden(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        assert any(e["inferred"] for e in self.interactive(ui)["edges"])
+
+        ui.toggle("er_inferred").set_value(False).run()
+
+        assert not any(e["inferred"] for e in self.interactive(ui)["edges"])
+
+    def test_depth_slider_widens_the_neighbourhood(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        near = len(self.interactive(ui)["tables"])
+
+        next(s for s in ui.at.slider if s.key == "er_depth").set_value(3).run()
+
+        assert len(self.interactive(ui)["tables"]) >= near
 
     def test_tables_from_last_answer(self, harness):
         ui = harness("SELECT name FROM customer", tables=["main.customer", "main.orders"]).index()
         ui.ask("list customers")
+        self.open(ui)
 
-        next(r for r in ui.at.radio if r.key == "er_mode").set_value("Tables from last answer").run()
+        self.mode(ui, "Tables from last answer")
 
-        dot = self.graph(ui)
-        assert "<B>customer</B>" in dot and "<B>orders</B>" in dot
+        data = self.interactive(ui)
+        ids = [t["id"] for t in data["tables"]]
+        assert ids[:2] == ["main.customer", "main.orders"]
+        assert any(
+            e["child"] == "main.orders" and e["parent"] == "main.customer"
+            for e in data["edges"]
+        )
 
     def test_last_answer_without_questions_shows_hint(self, harness):
-        ui = harness("SELECT 1").index()
+        ui = self.open(harness("SELECT 1").index())
 
-        next(r for r in ui.at.radio if r.key == "er_mode").set_value("Tables from last answer").run()
+        self.mode(ui, "Tables from last answer")
 
-        assert self.graph(ui) is None
+        assert self.interactive(ui) is None
         assert any("Ask a question first" in i.value for i in ui.at.info)
 
     def test_excluded_tables_are_not_drawn(self, harness):
         ui = harness("SELECT 1").index()
         ui.widget("multiselect", label="Exclude tables").select("main.customer").run()
         ui.button("Apply privacy settings").click().run()
+        self.open(ui)
 
-        assert "<B>customer</B>" not in self.graph(ui)
+        assert "main.customer" not in [t["id"] for t in self.interactive(ui)["tables"]]
+        assert "<B>customer</B>" not in self.static(ui)
+
+    def test_a_big_schema_is_capped_and_says_so(self, harness, tmp_path):
+        import sqlite3
+
+        path = tmp_path / "big.db"
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE hub(id INTEGER PRIMARY KEY)")
+        for i in range(45):
+            con.execute(f"CREATE TABLE t{i:02d}(id INTEGER PRIMARY KEY, hub_id INTEGER REFERENCES hub(id))")
+        con.commit()
+        con.close()
+        ui = harness("SELECT 1")
+        ui.widget("selectbox", key="conn_type").select("sqlite").run()
+        ui.widget("text_input", key="conn_db").set_value(str(path)).run()
+        ui.widget("text_input", key="conn_name").set_value("Big").run()
+        ui.button(key="conn_add").click().run()
+        ui.index()
+        self.open(ui)
+
+        self.mode(ui, "Whole schema")
+        data = self.interactive(ui)
+
+        assert len(data["tables"]) == 40
+        assert data["summary"].startswith("showing 40 of 46 tables")
+        assert not ui.at.warning, "truncation is reported in the viewer bar, not as a banner"

@@ -1,0 +1,120 @@
+:root {
+  --bg: #ffffff;
+  --bar: #f9fafb;
+  --bar-border: #e5e7eb;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --table-fill: #ffffff;
+  --frame: #9fb3c8;
+  --head: #dbe6f5;
+  --head-hover: #c9d9ef;
+  --row-hover: #f1f5f9;
+  --line: #5a6b85;
+  --line-inferred: #9ca3af;
+  --pk: #92400e;
+  --fk: #1d4ed8;
+  --accent: #f97316;
+  --accent-soft: #fff1dc;
+  --accent-picked: #ffd9a8;
+  --btn: #ffffff;
+  --btn-border: #cbd5e1;
+  --btn-hover: #f1f5f9;
+  color-scheme: light;
+}
+
+:root.dark {
+  --bg: #0e1117;
+  --bar: #161a23;
+  --bar-border: #2a3140;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --table-fill: #131722;
+  --frame: #475569;
+  --head: #1e293b;
+  --head-hover: #273449;
+  --row-hover: #1e2533;
+  --line: #94a3b8;
+  --line-inferred: #64748b;
+  --pk: #fbbf24;
+  --fk: #60a5fa;
+  --accent: #fb923c;
+  --accent-soft: #3a2a14;
+  --accent-picked: #5a3a14;
+  --btn: #1a1f2b;
+  --btn-border: #334155;
+  --btn-hover: #232a38;
+  color-scheme: dark;
+}
+
+/* No explicit theme from the app: follow the operating system. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light):not(.dark) {
+    --bg: #0e1117;
+    --bar: #161a23;
+    --bar-border: #2a3140;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --table-fill: #131722;
+    --frame: #475569;
+    --head: #1e293b;
+    --head-hover: #273449;
+    --row-hover: #1e2533;
+    --line: #94a3b8;
+    --line-inferred: #64748b;
+    --pk: #fbbf24;
+    --fk: #60a5fa;
+    --accent: #fb923c;
+    --accent-soft: #3a2a14;
+    --accent-picked: #5a3a14;
+    --btn: #1a1f2b;
+    --btn-border: #334155;
+    --btn-hover: #232a38;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text); background: var(--bg); }
+body { display: flex; flex-direction: column; }
+
+#bar { display: flex; align-items: flex-start; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--bar-border); background: var(--bar); min-height: 48px; }
+#info { flex: 1; min-width: 0; }
+#hint { color: var(--muted); }
+#selected { font-weight: 600; margin-bottom: 2px; }
+#lines { max-height: 112px; overflow-y: auto; }
+#lines div { font: 12px ui-monospace, Menlo, Consolas, monospace; color: var(--text); padding: 1px 0; overflow-wrap: anywhere; }
+#summary { color: var(--muted); font-size: 12px; white-space: nowrap; align-self: center; }
+.tools { display: flex; gap: 4px; flex-shrink: 0; }
+.tools button { font: inherit; color: var(--text); padding: 3px 10px; border: 1px solid var(--btn-border); border-radius: 6px; background: var(--btn); cursor: pointer; }
+.tools button:hover { background: var(--btn-hover); }
+[hidden] { display: none !important; }
+#stage { flex: 1; overflow: auto; padding: 4px; }
+svg { display: block; }
+
+.table .frame { fill: var(--table-fill); stroke: var(--frame); stroke-width: 1.2; }
+.table .head-bg { fill: var(--head); }
+.table .head { cursor: pointer; }
+.table .head:hover .head-bg { fill: var(--head-hover); }
+.table .title { font: 600 13px system-ui, sans-serif; fill: var(--text); pointer-events: none; }
+.col { cursor: pointer; }
+.col .bg { fill: transparent; }
+.col:hover .bg { fill: var(--row-hover); }
+.col .name { font: 12px ui-monospace, Menlo, Consolas, monospace; fill: var(--text); pointer-events: none; }
+.col.pk .name { font-weight: 700; fill: var(--pk); }
+.col.fk .name { fill: var(--fk); }
+.col .type { font: 11px ui-monospace, Menlo, Consolas, monospace; fill: var(--muted); pointer-events: none; }
+
+.edge .line { fill: none; stroke: var(--line); stroke-width: 1.4; }
+.edge.inferred .line { stroke-dasharray: 5 4; stroke: var(--line-inferred); }
+.edge .glyph { fill: none; stroke: var(--line); stroke-width: 1.4; }
+.edge.inferred .glyph { stroke: var(--line-inferred); }
+.edge .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+.edge:hover .line { stroke-width: 2.4; }
+
+.has-selection .table:not(.on) { opacity: 0.22; }
+.has-selection .edge:not(.on) { opacity: 0.1; }
+.has-selection .table.on .frame { stroke: var(--accent); stroke-width: 1.8; }
+.has-selection .edge.on .line { stroke: var(--accent); stroke-width: 2.8; stroke-dasharray: none; }
+.has-selection .edge.on .glyph { stroke: var(--accent); stroke-width: 2.4; }
+.has-selection .col.on .bg { fill: var(--accent-soft); }
+.has-selection .col.picked .bg { fill: var(--accent-picked); }

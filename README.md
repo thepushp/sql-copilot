@@ -15,7 +15,8 @@ Ask questions about your database in plain English and get SQL, results, charts 
 - **Business glossary:** define your own terms (`bus: the vehicle table`)
 - **Privacy controls:** exclude schemas/tables, hide columns by pattern, turn off sample values
 - **Results:** table, chart, CSV download, optional plain-language summary
-- **ER diagrams:** around a table, a whole schema, or the tables behind your last answer; export as Mermaid or Graphviz
+- **Clean, compact interface:** a slim header with Chat / Explorer / ER diagram sections, toolbars that wrap on narrow windows, light and dark theme support, and a diagram canvas that uses the rest of the window
+- **Interactive ER diagrams:** around a table, a whole schema, or the tables behind your last answer. Click a column, a relationship line or a table header to highlight how it connects to other tables (click a primary key to see every table that references it). Export as Mermaid or Graphviz
 - **Audit log:** a local record of what was asked and what SQL ran (never the data)
 
 ## Quick start
@@ -99,11 +100,11 @@ Publish the port on `127.0.0.1` as shown. Inside the container the app must list
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                   # ~15 s, no network, model or database needed
+pytest                                   # ~30 s, no network, model or database needed
 SQL_COPILOT_PG_TEST=1 pytest -m integration   # optional: read-only checks against your PostgreSQL
 ```
 
-The UI tests drive the real app with a scripted stand-in model, fake embeddings and a temporary SQLite database. See `CLAUDE.md` for the architecture and design notes.
+The UI tests drive the real app with a scripted stand-in model, fake embeddings and a temporary SQLite database. The ER viewer's JavaScript is tested with Node (`node --test`), and its click behavior with Playwright in your installed Chrome; both are skipped automatically if Node, Playwright or Chrome is missing. See `CLAUDE.md` for the architecture and design notes.
 
 ## Known limitations
 

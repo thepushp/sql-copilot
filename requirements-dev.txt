@@ -1,2 +1,3 @@
 -r requirements.txt
 pytest
+playwright  # optional: browser tests of the ER viewer (uses your installed Chrome)
