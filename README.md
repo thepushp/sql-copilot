@@ -15,8 +15,8 @@ Ask questions about your database in plain English and get SQL, results, charts 
 - **Business glossary:** define your own terms (`bus: the vehicle table`)
 - **Privacy controls:** exclude schemas/tables, hide columns by pattern, turn off sample values
 - **Results:** table, chart, CSV download, optional plain-language summary
-- **Clean, compact interface:** a slim header with Chat / Explorer / ER diagram sections, toolbars that wrap on narrow windows, light and dark theme support, and a diagram canvas that uses the rest of the window
-- **Interactive ER diagrams:** around a table, a whole schema, or the tables behind your last answer. Click a column, a relationship line or a table header to highlight how it connects to other tables (click a primary key to see every table that references it). Export as Mermaid or Graphviz
+- **Clean, compact interface:** a slim header with Chat / Explorer / ER diagram sections (the app name moves to the top strip when the sidebar is collapsed), toolbars that wrap on narrow windows, light and dark theme support, and a diagram canvas that uses the rest of the window
+- **Interactive ER diagrams:** around a table, a whole schema, or the tables behind your last answer. Click a column, a relationship line or a table header to highlight how it connects to other tables (click a primary key to see every table that references it). The Columns and View dropdowns say what they control and what is currently chosen. **Export** saves a PNG image (twice the on-screen size, whole diagram), an SVG, or Mermaid / Graphviz text; image exports match what you see, including any highlight and the light or dark theme
 - **Audit log:** a local record of what was asked and what SQL ran (never the data)
 
 ## Quick start

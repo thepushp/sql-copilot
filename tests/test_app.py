@@ -60,6 +60,9 @@ class Harness:
     def seg(self, key):
         return next(c for c in self.at.segmented_control if c.key == key)
 
+    def radio(self, key):
+        return next(r for r in self.at.radio if r.key == key)
+
     def toggle(self, key):
         return next(t for t in self.at.toggle if t.key == key)
 
@@ -560,6 +563,16 @@ class TestNavigation:
         assert not ui.at.title, "the big page title was replaced by a slim header"
         assert any("SQL Copilot" in m.value for m in ui.at.sidebar.markdown)
 
+    def test_brand_is_available_for_the_collapsed_sidebar(self, harness):
+        ui = harness("SELECT 1")
+
+        bodies = [h.proto.body for h in ui.at.get("html")]
+        assert any('<div class="sqlcopilot-brand">🗄️ SQL Copilot</div>' in b for b in bodies)
+        assert any("SQL Copilot" in m.value for m in ui.at.sidebar.markdown)
+        css = " ".join(bodies)
+        assert ".sqlcopilot-brand" in css
+        assert 'aria-expanded="false"' in css, "shown only while the sidebar is collapsed"
+
     def test_header_shows_the_connection_once_indexed(self, harness):
         ui = harness("SELECT 1")
         assert any("Not indexed yet" in c.value for c in ui.at.caption)
@@ -643,7 +656,7 @@ class TestErDiagram:
         return json.loads(match.group(1))
 
     def static(self, ui):
-        ui.seg("er_view").set_value("Static (Graphviz)").run()
+        ui.radio("er_view").set_value("Static (Graphviz)").run()
         charts = ui.at.get("graphviz_chart")
         return charts[0].proto.spec if charts else None
 
@@ -660,7 +673,7 @@ class TestErDiagram:
         ui = self.open(harness("SELECT 1").index())
         data = self.interactive(ui)
 
-        assert ui.seg("er_view").value == "Interactive"
+        assert ui.radio("er_view").value == "Interactive"
         assert not ui.at.get("graphviz_chart")
         assert len(data["tables"]) >= 3
         assert len(data["edges"]) >= 2
@@ -670,9 +683,57 @@ class TestErDiagram:
         ui = self.open(harness("SELECT 1").index())
 
         assert ui.seg("er_mode").options == ["Around table", "Schema", "Last answer"]
-        assert ui.seg("er_columns").value == "Keys only"
+        assert ui.radio("er_columns").options == ["Keys only", "All columns", "Names only"]
+        assert ui.radio("er_columns").value == "Keys only"
+        assert ui.radio("er_view").options == ["Interactive", "Static (Graphviz)"]
         assert ui.toggle("er_inferred").value is True
         assert ui.at.get("iframe")[0].proto.srcdoc
+
+    def test_dropdown_buttons_name_what_they_control_and_the_current_choice(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        labels = [p.proto.popover.label for p in ui.at.get("popover")]
+
+        assert "Columns: Keys only" in labels
+        assert "View: Interactive" in labels
+
+        ui.radio("er_columns").set_value("All columns").run()
+        ui.radio("er_view").set_value("Static (Graphviz)").run()
+        labels = [p.proto.popover.label for p in ui.at.get("popover")]
+
+        assert "Columns: All columns" in labels
+        assert "View: Static" in labels
+
+    def test_there_is_no_vague_options_menu(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+
+        assert not any("Options" in p.proto.popover.label for p in ui.at.get("popover"))
+
+    def test_options_explain_themselves(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        text = " ".join(
+            c.value for c in ui.at.caption
+        ) + " ".join(r.proto.label for r in ui.at.radio if r.key.startswith("er_"))
+
+        assert "What to show inside each table" in text
+        assert "How to draw the diagram" in text
+
+    def test_image_and_text_exports_live_in_the_viewer(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+        data = self.interactive(ui)
+
+        assert not ui.at.get("download_button")
+        assert data["exports"]["mermaid"].startswith("erDiagram")
+        assert data["exports"]["dot"].startswith("digraph ER")
+        html = self.frames(ui)[0].proto.srcdoc
+        for kind in ("png", "svg", "mermaid", "dot"):
+            assert f'data-export="{kind}"' in html
+
+    def test_static_view_keeps_text_downloads(self, harness):
+        ui = self.open(harness("SELECT 1").index())
+
+        self.static(ui)
+
+        assert [d.proto.label for d in ui.at.get("download_button")] == ["⬇ Mermaid", "⬇ Graphviz"]
 
     def test_summary_is_shown_inside_the_viewer(self, harness):
         ui = self.open(harness("SELECT 1").index())
@@ -715,7 +776,7 @@ class TestErDiagram:
     def test_columns_option_changes_what_is_shown(self, harness):
         ui = self.open(harness("SELECT 1").index())
 
-        ui.seg("er_columns").set_value("Names only").run()
+        ui.radio("er_columns").set_value("Names only").run()
 
         assert all(t["columns"] == [] for t in self.interactive(ui)["tables"])
 

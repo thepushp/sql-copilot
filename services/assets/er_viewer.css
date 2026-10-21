@@ -77,8 +77,8 @@
 html, body { margin: 0; height: 100%; font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text); background: var(--bg); }
 body { display: flex; flex-direction: column; }
 
-#bar { display: flex; align-items: flex-start; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--bar-border); background: var(--bar); min-height: 48px; }
-#info { flex: 1; min-width: 0; }
+#bar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; padding: 8px 12px; border-bottom: 1px solid var(--bar-border); background: var(--bar); min-height: 48px; }
+#info { flex: 1 1 260px; min-width: 0; }
 #hint { color: var(--muted); }
 #selected { font-weight: 600; margin-bottom: 2px; }
 #lines { max-height: 112px; overflow-y: auto; }
@@ -87,6 +87,13 @@ body { display: flex; flex-direction: column; }
 .tools { display: flex; gap: 4px; flex-shrink: 0; }
 .tools button { font: inherit; color: var(--text); padding: 3px 10px; border: 1px solid var(--btn-border); border-radius: 6px; background: var(--btn); cursor: pointer; }
 .tools button:hover { background: var(--btn-hover); }
+.export { position: relative; flex-shrink: 0; }
+.export > button { font: inherit; color: var(--text); padding: 3px 10px; border: 1px solid var(--btn-border); border-radius: 6px; background: var(--btn); cursor: pointer; }
+.export > button:hover { background: var(--btn-hover); }
+#export-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 190px; padding: 4px; border: 1px solid var(--btn-border); border-radius: 8px; background: var(--bar); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); }
+#export-menu button { display: block; width: 100%; text-align: left; font: inherit; color: var(--text); padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+#export-menu button:hover { background: var(--btn-hover); }
+.menu-note { color: var(--muted); font-size: 11px; padding: 4px 10px 6px; }
 [hidden] { display: none !important; }
 #stage { flex: 1; overflow: auto; padding: 4px; }
 svg { display: block; }

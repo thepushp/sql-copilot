@@ -41,6 +41,7 @@ def short_type(data_type):
 def graph_data(
     index, keys, mode="Keys only", include_inferred=True, focus=None, theme=None,
     summary=None,
+    exports=None,
 ):
     """Plain, JSON-ready description of the tables and relationships to draw."""
 
@@ -87,6 +88,7 @@ def graph_data(
     return {
         "theme": theme if theme in ("light", "dark") else None,
         "summary": summary,
+        "exports": exports or {},
         "focus": focus if focus in key_set else (keys[0] if keys else None),
         "showSchema": len({index[key].schema for key in keys}) > 1,
         "tables": tables,

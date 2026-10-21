@@ -552,6 +552,132 @@
     });
   }
 
+  /* --------------------------------------------------------------- export */
+
+  var STYLE_PROPS = [
+    "fill", "stroke", "stroke-width", "stroke-dasharray", "opacity",
+    "font-family", "font-size", "font-weight", "text-anchor",
+  ];
+  var MAX_SIDE = 8000;
+  var MAX_PIXELS = 40e6;
+
+  // A standalone SVG has no access to this page's stylesheet, so every
+  // visual property is copied onto the element as it looks right now.
+  function standaloneSvg(svg) {
+    var clone = svg.cloneNode(true);
+    var from = svg.querySelectorAll("*");
+    var to = clone.querySelectorAll("*");
+    var drop = [];
+
+    for (var i = 0; i < from.length; i++) {
+      var computed = getComputedStyle(from[i]);
+      var css = STYLE_PROPS.map(function (name) {
+        return name + ":" + computed.getPropertyValue(name);
+      }).join(";");
+      to[i].setAttribute("style", css);
+      to[i].removeAttribute("class");
+      if (from[i].classList.contains("hit") || from[i].tagName === "title") {
+        drop.push(to[i]);
+      }
+    }
+    drop.forEach(function (node) {
+      node.parentNode.removeChild(node);
+    });
+
+    var box = svg.viewBox.baseVal;
+    clone.setAttribute("width", box.width);
+    clone.setAttribute("height", box.height);
+    clone.removeAttribute("class");
+
+    var background = document.createElementNS(SVG_NS, "rect");
+    background.setAttribute("width", box.width);
+    background.setAttribute("height", box.height);
+    background.setAttribute("fill", getComputedStyle(document.body).backgroundColor);
+    clone.insertBefore(background, clone.firstChild);
+
+    return { text: new XMLSerializer().serializeToString(clone), width: box.width, height: box.height };
+  }
+
+  function pngFromSvg(image, done) {
+    var scale = Math.min(2, MAX_SIDE / Math.max(image.width, image.height),
+      Math.sqrt(MAX_PIXELS / (image.width * image.height)));
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+
+    var picture = new Image();
+    picture.onload = function () {
+      canvas.getContext("2d").drawImage(picture, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(done, "image/png");
+    };
+    picture.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(image.text);
+  }
+
+  function saveBlob(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+    }, 2000);
+  }
+
+  function exportDiagram(kind, svg, exportsData) {
+    if (kind === "png") {
+      pngFromSvg(standaloneSvg(svg), function (blob) {
+        saveBlob(blob, "er_diagram.png");
+      });
+    } else if (kind === "svg") {
+      saveBlob(
+        new Blob([standaloneSvg(svg).text], { type: "image/svg+xml" }),
+        "er_diagram.svg"
+      );
+    } else if (kind === "mermaid" && exportsData.mermaid) {
+      saveBlob(new Blob([exportsData.mermaid], { type: "text/plain" }), "er_diagram.mmd");
+    } else if (kind === "dot" && exportsData.dot) {
+      saveBlob(new Blob([exportsData.dot], { type: "text/plain" }), "er_diagram.dot");
+    }
+  }
+
+  function initExportMenu(svg, exportsData) {
+    var button = document.getElementById("export-button");
+    var menu = document.getElementById("export-menu");
+
+    function setOpen(open) {
+      menu.hidden = !open;
+      button.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    menu.querySelectorAll("[data-export]").forEach(function (item) {
+      var kind = item.getAttribute("data-export");
+      if ((kind === "mermaid" || kind === "dot") && !exportsData[kind]) {
+        item.hidden = true;
+      }
+      item.addEventListener("click", function (event) {
+        event.stopPropagation();
+        setOpen(false);
+        exportDiagram(kind, svg, exportsData);
+      });
+    });
+
+    button.addEventListener("click", function (event) {
+      event.stopPropagation();
+      setOpen(menu.hidden);
+    });
+    document.addEventListener("click", function () {
+      setOpen(false);
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    });
+  }
+
   function init() {
     var data = JSON.parse(document.getElementById("er-data").textContent);
     if (data.theme === "dark" || data.theme === "light") {
@@ -680,6 +806,7 @@
     centerOnFocus();
     show(null);
     summary.textContent = data.summary || "";
+    initExportMenu(svg, data.exports || {});
 
     root.__er = { model: model, state: state, select: { column: selectColumn, edge: selectEdge, table: selectTable } };
   }

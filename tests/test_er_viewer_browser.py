@@ -514,3 +514,192 @@ class TestUntrustedNames:
 
         assert page.locator(".table .title").text_content().endswith("…")
         assert page.locator(".table").evaluate("e => e.getBoundingClientRect().width") < 600
+
+
+class TestExport:
+    """Real downloads from the viewer: what comes out is what is on screen."""
+
+    @pytest.fixture
+    def data(self, shop_data):
+        return dict(
+            shop_data,
+            exports={"mermaid": "erDiagram\n  a ||--o{ b : \"x\"", "dot": "digraph ER {\n}"},
+        )
+
+    def download(self, page, kind, tmp_path):
+        page.click("#export-button")
+
+        with page.expect_download(timeout=15000) as info:
+            page.click(f'[data-export="{kind}"]')
+
+        path = tmp_path / info.value.suggested_filename
+        info.value.save_as(path)
+
+        return info.value.suggested_filename, path
+
+    def test_menu_is_closed_until_opened(self, open_viewer, data):
+        page = open_viewer(data)
+
+        assert page.locator("#export-menu").is_hidden()
+
+        page.click("#export-button")
+
+        assert page.locator("#export-menu").is_visible()
+        assert page.get_attribute("#export-button", "aria-expanded") == "true"
+        assert page.locator("#export-menu [data-export]:visible").all_inner_texts() == [
+            "PNG image", "SVG vector", "Mermaid (.mmd)", "Graphviz (.dot)",
+        ]
+
+    @pytest.mark.parametrize("how", ["escape", "outside", "toggle"])
+    def test_menu_closes(self, open_viewer, data, how):
+        page = open_viewer(data)
+        page.click("#export-button")
+
+        if how == "escape":
+            page.keyboard.press("Escape")
+        elif how == "outside":
+            page.mouse.click(600, 600)
+        else:
+            page.click("#export-button")
+
+        assert page.locator("#export-menu").is_hidden()
+
+    def test_text_formats_are_hidden_when_not_provided(self, open_viewer, shop_data):
+        page = open_viewer(dict(shop_data, exports={}))
+        page.click("#export-button")
+
+        assert page.locator("#export-menu [data-export]:visible").all_inner_texts() == [
+            "PNG image", "SVG vector",
+        ]
+
+    def test_png_download_is_a_sharp_image_of_the_whole_diagram(self, open_viewer, data, tmp_path):
+        from PIL import Image
+
+        page = open_viewer(data)
+        view_box = [float(v) for v in page.get_attribute("#canvas", "viewBox").split()]
+
+        name, path = self.download(page, "png", tmp_path)
+
+        assert name == "er_diagram.png"
+        assert path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        image = Image.open(path)
+        assert image.size == (round(view_box[2] * 2), round(view_box[3] * 2)), "twice the on-screen size"
+        assert image.getpixel((2, 2))[:3] == (255, 255, 255)
+        assert len({image.getpixel((x, y))[:3] for x in range(0, image.width, 7) for y in range(0, image.height, 7)}) > 5
+
+    def test_png_exports_the_whole_diagram_even_when_scrolled_and_zoomed(self, open_viewer, tmp_path):
+        from PIL import Image
+
+        page = open_viewer(chain_graph(), width=700, height=500)
+        view_box = [float(v) for v in page.get_attribute("#canvas", "viewBox").split()]
+        page.click("#zoom-in")
+
+        _, path = self.download(page, "png", tmp_path)
+
+        assert Image.open(path).size == (round(view_box[2] * 2), round(view_box[3] * 2))
+
+    def test_png_of_a_huge_diagram_stays_within_safe_limits(self, open_viewer, tmp_path):
+        from PIL import Image
+
+        page = open_viewer(hub_graph(60))
+
+        _, path = self.download(page, "png", tmp_path)
+        image = Image.open(path)
+
+        assert max(image.size) <= 8000
+        assert image.width * image.height <= 40e6
+
+    def test_png_follows_the_dark_theme(self, open_viewer, data, tmp_path):
+        from PIL import Image
+
+        page = open_viewer(dict(data, theme="dark"))
+
+        _, path = self.download(page, "png", tmp_path)
+
+        assert Image.open(path).getpixel((2, 2))[:3] == (14, 17, 23)
+
+    def test_svg_download_is_standalone_xml(self, open_viewer, data, tmp_path):
+        import xml.etree.ElementTree as ET
+
+        page = open_viewer(data)
+
+        name, path = self.download(page, "svg", tmp_path)
+        text = path.read_text(encoding="utf-8")
+        root = ET.fromstring(text)
+
+        assert name == "er_diagram.svg"
+        assert root.tag.endswith("svg")
+        assert "var(" not in text, "styles are resolved, not left as CSS variables"
+        assert "class=" not in text
+        assert text.count("<title") == 0, "tooltips are not exported"
+        for table in ("customer", "orders", "order_item"):
+            assert f">{table}<" in text
+        assert float(root.get("width")) > 0 and float(root.get("height")) > 0
+
+    def test_svg_has_a_background_so_it_is_readable_anywhere(self, open_viewer, data, tmp_path):
+        import xml.etree.ElementTree as ET
+
+        page = open_viewer(dict(data, theme="dark"))
+
+        _, path = self.download(page, "svg", tmp_path)
+        first = list(ET.fromstring(path.read_text(encoding="utf-8")))[0]
+
+        assert first.tag.endswith("rect")
+        assert first.get("fill") == "rgb(14, 17, 23)"
+
+    def test_exports_include_the_current_highlight(self, open_viewer, data, tmp_path):
+        page = open_viewer(data)
+
+        _, plain = self.download(page, "svg", tmp_path)
+        column(page, "orders", "customer_id").click()
+        page.click("#export-button")
+        with page.expect_download() as info:
+            page.click('[data-export="svg"]')
+        highlighted = tmp_path / "highlighted.svg"
+        info.value.save_as(highlighted)
+
+        accent = "rgb(249, 115, 22)"
+        assert accent not in plain.read_text(encoding="utf-8")
+        assert accent in highlighted.read_text(encoding="utf-8")
+        assert "opacity:0.22" in highlighted.read_text(encoding="utf-8")
+
+    def test_hit_areas_are_not_exported(self, open_viewer, data, tmp_path):
+        page = open_viewer(data)
+
+        _, path = self.download(page, "svg", tmp_path)
+
+        assert "stroke-width:14px" not in path.read_text(encoding="utf-8")
+
+    def test_mermaid_and_dot_download_the_provided_text(self, open_viewer, data, tmp_path):
+        page = open_viewer(data)
+
+        mermaid_name, mermaid = self.download(page, "mermaid", tmp_path)
+        dot_name, dot = self.download(page, "dot", tmp_path)
+
+        assert (mermaid_name, mermaid.read_text()) == ("er_diagram.mmd", data["exports"]["mermaid"])
+        assert (dot_name, dot.read_text()) == ("er_diagram.dot", data["exports"]["dot"])
+
+    def test_hostile_names_cannot_break_the_exported_svg(self, open_viewer, tmp_path):
+        import xml.etree.ElementTree as ET
+
+        data = TestUntrustedNames().data()
+        data["exports"] = {}
+        page = open_viewer(data)
+
+        _, path = self.download(page, "svg", tmp_path)
+        text = path.read_text(encoding="utf-8")
+        root = ET.fromstring(text)
+
+        assert "<img" not in text and "<script" not in text
+        tags = {element.tag.split("}")[-1] for element in root.iter()}
+        assert not tags & {"img", "script", "foreignObject"}
+        assert page.evaluate("window.__pwned") is None
+
+    def test_exporting_does_not_disturb_the_selection(self, open_viewer, data, tmp_path):
+        page = open_viewer(data)
+        column(page, "orders", "customer_id").click()
+
+        self.download(page, "png", tmp_path)
+
+        assert page.locator(".edge.on").count() == 1
+        assert page.js_errors == []

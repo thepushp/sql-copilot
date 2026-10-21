@@ -18,6 +18,16 @@
     <button id="fit" title="Fit to width">Fit</button>
     <button id="clear" title="Clear selection (Esc)">Clear</button>
   </div>
+  <div class="export">
+    <button id="export-button" aria-haspopup="true" aria-expanded="false" title="Download this diagram">Export &#9662;</button>
+    <div id="export-menu" role="menu" hidden>
+      <div class="menu-note">Saves what you see, including any highlight.</div>
+      <button role="menuitem" data-export="png">PNG image</button>
+      <button role="menuitem" data-export="svg">SVG vector</button>
+      <button role="menuitem" data-export="mermaid">Mermaid (.mmd)</button>
+      <button role="menuitem" data-export="dot">Graphviz (.dot)</button>
+    </div>
+  </div>
 </div>
 <div id="stage"><svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <script type="application/json" id="er-data">__DATA__</script>

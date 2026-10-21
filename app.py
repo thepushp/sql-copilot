@@ -76,6 +76,8 @@ NAV_EXPLORER = "🌳 Explorer"
 NAV_ER = "🔗 ER diagram"
 NAV_OPTIONS = [NAV_CHAT, NAV_EXPLORER, NAV_ER]
 
+ER_VIEWS = ["Interactive", "Static (Graphviz)"]
+
 ER_SHOW_LABELS = {
     "Around a table": "Around table",
     "Whole schema": "Schema",
@@ -85,6 +87,16 @@ ER_SHOW_LABELS = {
 # Tighter page padding, and the status text right-aligned. Only touches
 # layout, never content.
 BASE_CSS = """
+/* The app name appears in the empty top strip only while the sidebar (which
+   shows it itself) is collapsed. */
+.sqlcopilot-brand { display: none; }
+.stApp:has([data-testid="stSidebar"][aria-expanded="false"]) .sqlcopilot-brand {
+  display: block; position: fixed; top: 0.95rem; left: 3.6rem; z-index: 1000002;
+  font-weight: 600; white-space: nowrap; pointer-events: none;
+}
+/* Deploy targets Streamlit Community Cloud, which an open-source self-hosted
+   tool does not use. The three-dot menu (Rerun, ...) stays. */
+[data-testid="stAppDeployButton"] { display: none !important; }
 .block-container { padding-top: 4.5rem !important; padding-bottom: 1rem !important; }
 """
 
@@ -1679,32 +1691,42 @@ def render_er_diagram():
         show_slot = st.container(width="content")
         pick_slot = st.container(width="content")
         extra_slot = st.container(width="content")
-        tools_slot = st.container(width="content")
+        columns_slot = st.container(width="content")
+        view_slot = st.container(width="content")
 
-    with tools_slot:
+    # The buttons show the current choice, so nothing has to be opened to see it.
+    hide_isolated = True
 
-        options_popover = st.popover("⚙ Options")
+    columns_now = st.session_state.get("er_columns", COLUMN_MODES[0])
+    view_now = st.session_state.get("er_view", ER_VIEWS[0])
 
-        with options_popover:
+    with columns_slot:
 
-            detail = st.segmented_control(
-                "Columns",
+        with st.popover(f"Columns: {columns_now}"):
+
+            detail = st.radio(
+                "What to show inside each table",
                 COLUMN_MODES,
-                default="Keys only",
-                required=True,
+                captions=[
+                    "Primary and foreign keys only",
+                    "Every column (very long tables are trimmed)",
+                    "Just the table names",
+                ],
                 key="er_columns",
             )
 
-            er_view = st.segmented_control(
-                "View",
-                ["Interactive", "Static (Graphviz)"],
-                default="Interactive",
-                required=True,
+    with view_slot:
+
+        with st.popover(f"View: {view_now.split(' ')[0]}"):
+
+            er_view = st.radio(
+                "How to draw the diagram",
+                ER_VIEWS,
+                captions=[
+                    "Click a column, line or table to highlight its links",
+                    "A fixed picture (Graphviz)",
+                ],
                 key="er_view",
-                help=(
-                    "Interactive: click a column, a line or a table header "
-                    "to highlight its relationships."
-                ),
             )
 
             include_inferred = st.toggle(
@@ -1716,6 +1738,14 @@ def render_er_diagram():
                     "opposed to real foreign keys."
                 ),
             )
+
+            if st.session_state.get("er_mode") == "Whole schema":
+
+                hide_isolated = st.toggle(
+                    "Hide tables without relationships",
+                    value=True,
+                    key="er_hide_isolated",
+                )
 
     with show_slot:
 
@@ -1741,12 +1771,12 @@ def render_er_diagram():
                 options,
                 index=options.index(most_connected(index, include_inferred)),
                 key="er_table",
-                width=210,
+                width=190,
             )
 
         with extra_slot:
 
-            hops = st.slider("Depth", 1, 3, 1, key="er_depth", width=150)
+            hops = st.slider("Depth", 1, 3, 1, key="er_depth", width=130)
 
         keys = expand_around(index, start, hops, include_inferred)
 
@@ -1768,16 +1798,7 @@ def render_er_diagram():
                     )
                 ),
                 key="er_schema",
-                width=210,
-            )
-
-        with extra_slot:
-
-            hide_isolated = st.toggle(
-                "Hide unconnected",
-                value=True,
-                key="er_hide_isolated",
-                help="Hide tables that have no relationships.",
+                width=190,
             )
 
         keys = schema_tables(
@@ -1842,27 +1863,9 @@ def render_er_diagram():
 
     dot = build_dot(index, keys, detail, include_inferred)
 
-    with options_popover:
+    mermaid = build_mermaid(index, keys, detail, include_inferred)
 
-        st.divider()
-
-        st.caption("Export this diagram")
-
-        st.download_button(
-            "⬇ Mermaid (.mmd)",
-            build_mermaid(index, keys, detail, include_inferred),
-            file_name="er_diagram.mmd",
-            key="download_mermaid",
-            width="stretch",
-        )
-
-        st.download_button(
-            "⬇ Graphviz (.dot)",
-            dot,
-            file_name="er_diagram.dot",
-            key="download_dot",
-            width="stretch",
-        )
+    data["exports"] = {"mermaid": mermaid, "dot": dot}
 
     # Small diagrams get a compact frame; larger ones use the rest of the window.
     frame_height = (
@@ -1884,7 +1887,23 @@ def render_er_diagram():
 
         else:
 
-            st.caption(summary)
+            with st.container(horizontal=True, vertical_alignment="center"):
+
+                st.caption(summary)
+
+                st.download_button(
+                    "⬇ Mermaid",
+                    mermaid,
+                    file_name="er_diagram.mmd",
+                    key="download_mermaid",
+                )
+
+                st.download_button(
+                    "⬇ Graphviz",
+                    dot,
+                    file_name="er_diagram.dot",
+                    key="download_dot",
+                )
 
             st.graphviz_chart(dot, width="stretch")
 
@@ -2031,6 +2050,8 @@ def main():
     settings = render_sidebar()
 
     st.html(f"<style>{BASE_CSS}</style>")
+
+    st.html('<div class="sqlcopilot-brand">🗄️ SQL Copilot</div>')
 
     view = render_header(settings)
 

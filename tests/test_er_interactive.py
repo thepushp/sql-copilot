@@ -113,6 +113,12 @@ class TestGraphData:
         assert data["theme"] == "dark"
         assert data["summary"] == "3 tables"
 
+    def test_exports_pass_through(self, index):
+        data = graph_data(index, KEYS, exports={"mermaid": "erDiagram", "dot": "digraph {}"})
+
+        assert data["exports"] == {"mermaid": "erDiagram", "dot": "digraph {}"}
+        assert graph_data(index, KEYS)["exports"] == {}
+
     def test_unknown_theme_is_dropped(self, index):
         assert graph_data(index, KEYS, theme="sepia")["theme"] is None
         assert graph_data(index, KEYS)["theme"] is None

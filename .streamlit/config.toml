@@ -7,8 +7,9 @@ address = "127.0.0.1"
 gatherUsageStats = false
 
 [client]
-# Hides the "Deploy" button; keeps the settings menu.
-toolbarMode = "minimal"
+# Keep the full three-dot menu (Rerun, Clear cache, Print, ...). "minimal" and
+# "viewer" remove Rerun. The Deploy button is hidden by a style rule in app.py.
+toolbarMode = "developer"
 
 [theme]
 primaryColor = "#2563eb"
