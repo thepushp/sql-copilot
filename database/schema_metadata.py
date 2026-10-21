@@ -3,6 +3,9 @@ from dataclasses import dataclass, field
 from langchain_core.documents import Document
 
 
+VIEW_KINDS = ("view", "materialized view")
+
+
 @dataclass
 class ColumnMetadata:
     name: str
@@ -10,6 +13,9 @@ class ColumnMetadata:
     nullable: str
     default: str | None
     primary_key: bool = False
+    comment: str | None = None
+    values: list[str] = field(default_factory=list)
+    values_kind: str = ""
 
 
 @dataclass
@@ -34,21 +40,41 @@ class IndexMetadata:
 class TableMetadata:
     schema: str
     name: str
-    columns: list[ColumnMetadata] = field(default_factory=list)
-    foreign_keys: list[ForeignKeyMetadata] = field(default_factory=list)
-    indexes: list[IndexMetadata] = field(default_factory=list)
+    columns: list[ColumnMetadata] = field(
+        default_factory=list
+    )
+    foreign_keys: list[ForeignKeyMetadata] = field(
+        default_factory=list
+    )
+    indexes: list[IndexMetadata] = field(
+        default_factory=list
+    )
+
+    # Flyway information
+    flyway_managed: bool = False
+    flyway_active: bool = True
+    flyway_created_by: str | None = None
+    flyway_dropped_by: str | None = None
+    flyway_last_migration: str | None = None
+
+    kind: str = "table"
+    comment: str | None = None
+    approx_rows: int | None = None
 
 
 @dataclass
 class SchemaMetadata:
     name: str
-    tables: list[TableMetadata] = field(default_factory=list)
+    tables: list[TableMetadata] = field(
+        default_factory=list
+    )
 
 
 @dataclass
 class DatabaseMetadata:
-    schemas: list[SchemaMetadata] = field(default_factory=list)
-    view_count: int = 0
+    schemas: list[SchemaMetadata] = field(
+        default_factory=list
+    )
 
     @property
     def schema_count(self):
@@ -57,26 +83,101 @@ class DatabaseMetadata:
     @property
     def table_count(self):
         return sum(
-            len(schema.tables)
+            1
             for schema in self.schemas
+            for table in schema.tables
+            if table.kind not in VIEW_KINDS
+        )
+
+    @property
+    def view_count(self):
+        return sum(
+            1
+            for schema in self.schemas
+            for table in schema.tables
+            if table.kind in VIEW_KINDS
         )
 
     def to_documents(self):
+
         documents = []
+
+        related = self._related_tables()
 
         for schema in self.schemas:
 
             for table in schema.tables:
 
+                if not table.flyway_active:
+                    continue
+
+                key = f"{schema.name}.{table.name}"
+
                 lines = [
                     f"Schema: {schema.name}",
                     f"Table: {table.name}",
-                    "Columns:",
                 ]
 
-                # -------------------------------------------------
+                if table.kind != "table":
+
+                    lines.append(f"Type: {table.kind}")
+
+                if table.comment:
+
+                    lines.append(
+                        f"Description: {table.comment}"
+                    )
+
+                if table.approx_rows and table.approx_rows > 0:
+
+                    lines.append(
+                        f"Approx rows: {table.approx_rows:,}"
+                    )
+
+                # ---------------------------------------------
+                # Flyway state
+                # ---------------------------------------------
+
+                if table.flyway_managed:
+
+                    if table.flyway_active:
+
+                        lines.append(
+                            "Flyway status: ACTIVE"
+                        )
+
+                    else:
+
+                        lines.append(
+                            "Flyway status: DROPPED / INACTIVE"
+                        )
+
+                    if table.flyway_created_by:
+
+                        lines.append(
+                            f"Created by Flyway: "
+                            f"{table.flyway_created_by}"
+                        )
+
+                    if table.flyway_dropped_by:
+
+                        lines.append(
+                            f"Dropped by Flyway: "
+                            f"{table.flyway_dropped_by}"
+                        )
+
+                    if table.flyway_last_migration:
+
+                        lines.append(
+                            f"Last Flyway migration: "
+                            f"{table.flyway_last_migration}"
+                        )
+
+                # ---------------------------------------------
                 # Columns
-                # -------------------------------------------------
+                # ---------------------------------------------
+
+                lines.append("Columns:")
 
                 for column in table.columns:
 
@@ -86,21 +187,46 @@ class DatabaseMetadata:
                         else ""
                     )
 
+                    extras = ""
+
+                    if column.values:
+
+                        label = (
+                            "allowed_values"
+                            if column.values_kind == "enum"
+                            else "common_values"
+                        )
+
+                        extras += (
+                            f", {label}=["
+                            + ", ".join(column.values)
+                            + "]"
+                        )
+
+                    if column.comment:
+
+                        extras += (
+                            f", description={column.comment}"
+                        )
+
                     lines.append(
                         f"- {column.name}: "
                         f"{column.data_type}, "
                         f"nullable={column.nullable}, "
                         f"default={column.default}"
                         f"{pk}"
+                        f"{extras}"
                     )
 
-                # -------------------------------------------------
+                # ---------------------------------------------
                 # Relationships
-                # -------------------------------------------------
+                # ---------------------------------------------
 
                 if table.foreign_keys:
 
-                    lines.append("Relationships:")
+                    lines.append(
+                        "Relationships:"
+                    )
 
                     for fk in table.foreign_keys:
 
@@ -111,7 +237,8 @@ class DatabaseMetadata:
                         )
 
                         lines.append(
-                            f"- {table.schema}.{table.name}."
+                            f"- {table.schema}."
+                            f"{table.name}."
                             f"{fk.column} -> "
                             f"{fk.foreign_schema}."
                             f"{fk.foreign_table}."
@@ -119,9 +246,9 @@ class DatabaseMetadata:
                             f"(type={relationship_type})"
                         )
 
-                # -------------------------------------------------
+                # ---------------------------------------------
                 # Indexes
-                # -------------------------------------------------
+                # ---------------------------------------------
 
                 if table.indexes:
 
@@ -135,12 +262,11 @@ class DatabaseMetadata:
                             if column is not None
                         ]
 
-                        if index_columns:
-                            column_text = ", ".join(
-                                index_columns
-                            )
-                        else:
-                            column_text = "expression/unknown"
+                        column_text = (
+                            ", ".join(index_columns)
+                            if index_columns
+                            else "expression/unknown"
+                        )
 
                         lines.append(
                             f"- {index.name}: "
@@ -149,12 +275,6 @@ class DatabaseMetadata:
                             f"method={index.method}"
                         )
 
-                        if index.definition:
-                            lines.append(
-                                f"  Definition: "
-                                f"{index.definition}"
-                            )
-
                 documents.append(
                     Document(
                         page_content="\n".join(lines),
@@ -162,20 +282,135 @@ class DatabaseMetadata:
                             "schema": schema.name,
                             "table": table.name,
                             "type": "database_schema",
+                            "key": key,
+                            "kind": table.kind,
+                            "columns": [
+                                column.name
+                                for column in table.columns
+                            ],
+                            "values": [
+                                value
+                                for column in table.columns
+                                for value in column.values
+                            ],
+                            "search_text": _search_text(table),
+                            "summary": _summary_line(table),
+                            "related": sorted(
+                                related.get(key, ())
+                            ),
+                            "flyway_active": (
+                                table.flyway_active
+                            ),
                         },
                     )
                 )
 
         return documents
 
+    def _related_tables(self):
+
+        active = {
+            f"{schema.name}.{table.name}"
+            for schema in self.schemas
+            for table in schema.tables
+            if table.flyway_active
+        }
+
+        related = {key: set() for key in active}
+
+        for schema in self.schemas:
+
+            for table in schema.tables:
+
+                source = f"{schema.name}.{table.name}"
+
+                if source not in active:
+                    continue
+
+                for fk in table.foreign_keys:
+
+                    target = (
+                        f"{fk.foreign_schema}."
+                        f"{fk.foreign_table}"
+                    )
+
+                    if target in active and target != source:
+
+                        related[source].add(target)
+                        related[target].add(source)
+
+        return related
+
+
+def _words(name):
+
+    return name.replace("_", " ")
+
+
+def _search_text(table):
+
+    parts = [
+        f"{_words(table.name)} "
+        f"{'' if table.kind == 'table' else table.kind + ' '}"
+        f"in {_words(table.schema)}"
+    ]
+
+    if table.comment:
+        parts.append(table.comment)
+
+    parts.append(
+        "columns: "
+        + ", ".join(_words(column.name) for column in table.columns)
+    )
+
+    value_parts = [
+        f"{_words(column.name)} {', '.join(column.values[:6])}"
+        for column in table.columns
+        if column.values
+    ]
+
+    if value_parts:
+        parts.append("values: " + "; ".join(value_parts))
+
+    return ". ".join(parts)
+
+
+def _summary_line(table):
+
+    columns = [column.name for column in table.columns]
+
+    shown = ", ".join(columns[:12]) + (
+        ", ..." if len(columns) > 12 else ""
+    )
+
+    line = f"{table.schema}.{table.name}"
+
+    if table.kind != "table":
+        line += f" [{table.kind}]"
+
+    line += f": {shown}"
+
+    value_hints = [
+        f"{column.name}={'|'.join(column.values[:5])}"
+        for column in table.columns
+        if column.values
+    ][:3]
+
+    if value_hints:
+        line += " [" + "; ".join(value_hints) + "]"
+
+    if table.comment:
+        line += f" -- {table.comment}"
+
+    if table.approx_rows and table.approx_rows > 0:
+        line += f" (~{table.approx_rows:,} rows)"
+
+    return line
+
 
 def infer_relationships(
     database_metadata: DatabaseMetadata,
 ) -> None:
-
-    # -------------------------------------------------------------
-    # Build table lookup
-    # -------------------------------------------------------------
 
     table_map = {
         (
@@ -184,11 +419,8 @@ def infer_relationships(
         ): table
         for schema in database_metadata.schemas
         for table in schema.tables
+        if table.flyway_active
     }
-
-    # -------------------------------------------------------------
-    # Inspect every table
-    # -------------------------------------------------------------
 
     for child_table in table_map.values():
 
@@ -196,14 +428,6 @@ def infer_relationships(
 
             column_name = column.name.lower()
 
-            # We only infer relationships for columns ending in _id.
-            #
-            # Example:
-            #
-            # student_id
-            # school_id
-            # driver_id
-            #
             if not column_name.endswith("_id"):
                 continue
 
@@ -211,10 +435,6 @@ def infer_relationships(
 
             if not parent_table_name:
                 continue
-
-            # -----------------------------------------------------
-            # Find parent table in the SAME schema
-            # -----------------------------------------------------
 
             parent_table = table_map.get(
                 (
@@ -225,10 +445,6 @@ def infer_relationships(
 
             if parent_table is None:
                 continue
-
-            # -----------------------------------------------------
-            # Parent must contain "id"
-            # -----------------------------------------------------
 
             parent_id = next(
                 (
@@ -242,12 +458,9 @@ def infer_relationships(
             if parent_id is None:
                 continue
 
-            # -----------------------------------------------------
-            # Check if explicit FK already exists
-            # -----------------------------------------------------
-
             already_exists = any(
-                fk.column.lower() == column.name.lower()
+                fk.column.lower()
+                == column.name.lower()
                 and fk.foreign_schema.lower()
                 == parent_table.schema.lower()
                 and fk.foreign_table.lower()
@@ -259,10 +472,6 @@ def infer_relationships(
 
             if already_exists:
                 continue
-
-            # -----------------------------------------------------
-            # Add inferred relationship
-            # -----------------------------------------------------
 
             child_table.foreign_keys.append(
                 ForeignKeyMetadata(

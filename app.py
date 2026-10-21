@@ -1,43 +1,61 @@
+import os
+from dataclasses import dataclass
+
 import streamlit as st
 
 from config.datasource_config import DATASOURCES
-from config.model_config import MODEL_CONFIG
-
-from database.database_inspector import (
-    inspect_database,
+from config.model_config import CONTEXT_PROFILES, MODEL_CONFIG
+from config.privacy import (
+    AccessPolicy,
+    PrivacySettings,
+    apply_privacy,
 )
 
-from database.query_executor import (
-    execute_query,
-)
+from database.database_inspector import inspect_database
+from database.query_executor import execute_query
+from database.sql_guard import validate_sql
 
-from database.sql_guard import (
-    validate_sql,
-)
-
-from rag.context_builder import (
-    build_context,
-)
-
+from rag.context_builder import build_context
 from rag.embeddings import (
+    EMBEDDING_CHOICES,
+    default_embedding_model,
     get_embeddings,
 )
-
-from rag.schema_indexer import (
-    build_schema_index,
-)
-
 from rag.retriever import (
-    create_retriever,
+    add_related_tables,
+    retrieve_candidates,
+    retrieve_documents,
 )
+from rag.schema_indexer import build_schema_index
 
-from services.llm_service import (
-    get_llm,
+from services.charting import chart_data
+from services.glossary import expand_query, load_glossary, save_glossary
+from services.table_selector import select_tables
+from services.example_store import (
+    add_example,
+    find_similar,
+    format_examples,
 )
-
+from services.llm_service import DEFAULT_TIMEOUT, get_llm
+from services.model_catalog import list_models
 from services.query_service import (
+    NeedsClarification,
+    NoSQLGenerated,
+    build_history,
     process_question,
+    repair_question,
+    summarize_result,
 )
+
+
+EXPLORER_TABLE_LIMIT = 50
+CUSTOM_MODEL = "Custom..."
+
+EXAMPLE_QUESTIONS = [
+    "How many rows are in each table?",
+    "Show 10 recent records from the largest table",
+    "Which tables reference each other?",
+]
 
 
 st.set_page_config(
@@ -47,500 +65,1079 @@ st.set_page_config(
 )
 
 
-if "messages" not in st.session_state:
+@dataclass
+class RunSettings:
+    datasource_name: str
+    embedding_model: str
+    provider: str
+    model: str
+    temperature: float
+    api_key: str
+    base_url: str
+    timeout: int
+    profile: dict
+    summarize: bool
+    smart_select: bool
+
+
+def init_state():
+
+    defaults = {
+        "messages": [],
+        "raw_metadata": None,
+        "database_metadata": None,
+        "access_policy": AccessPolicy(),
+        "privacy": PrivacySettings(),
+        "schema_index": None,
+        "indexed_datasource": None,
+        "index_embedding_model": None,
+        "pending_question": None,
+        "model_nonce": 0,
+    }
+
+    for key, value in defaults.items():
+
+        if key not in st.session_state:
+
+            st.session_state[key] = value
+
+
+def is_indexed(datasource_name):
+
+    return (
+        st.session_state.schema_index is not None
+        and st.session_state.indexed_datasource == datasource_name
+    )
+
+
+def rebuild_index(embedding_model):
+
+    filtered, policy = apply_privacy(
+        st.session_state.raw_metadata,
+        st.session_state.privacy,
+    )
+
+    index = build_schema_index(
+        filtered.to_documents(),
+        get_embeddings(embedding_model),
+    )
+
+    st.session_state.database_metadata = filtered
+    st.session_state.access_policy = policy
+    st.session_state.schema_index = index
+    st.session_state.index_embedding_model = embedding_model
+
+
+def index_database(datasource_name, embedding_model):
+
+    with st.spinner("Discovering schemas and building index..."):
+
+        try:
+
+            raw = inspect_database(datasource_name)
+
+            st.session_state.raw_metadata = raw
+            st.session_state.indexed_datasource = datasource_name
+
+            rebuild_index(embedding_model)
+
+        except Exception as exc:
+
+            st.session_state.indexed_datasource = None
+            st.session_state.schema_index = None
+
+            st.error(f"Database discovery failed: {exc}")
+
+            return
+
     st.session_state.messages = []
 
 
-if "database_metadata" not in st.session_state:
-    st.session_state.database_metadata = None
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_models(provider, api_key, base_url, nonce):
+
+    try:
+
+        return list_models(provider, api_key, base_url), None
+
+    except Exception as exc:
+
+        return [], str(exc)
 
 
-if "schema_index" not in st.session_state:
-    st.session_state.schema_index = None
-
-
-if "indexed_datasource" not in st.session_state:
-    st.session_state.indexed_datasource = None
-
-
-with st.sidebar:
-
-    st.header(
-        "⚙️ Configuration"
-    )
-
-    datasource_name = st.selectbox(
-        "Datasource",
-        list(DATASOURCES.keys()),
-    )
+def render_model_settings():
 
     provider = st.selectbox(
-        "AI Provider",
+        "AI provider",
         list(MODEL_CONFIG.keys()),
     )
 
-    model = st.selectbox(
-        "Model",
-        MODEL_CONFIG[provider]["models"],
+    config = MODEL_CONFIG[provider]
+
+    api_key = ""
+
+    if config["needs_key"]:
+
+        api_key = st.text_input(
+            "API key",
+            type="password",
+            key=f"api_key_{provider}",
+            help=(
+                f"Leave empty to use {config['key_env']} "
+                "from the environment."
+            ),
+        )
+
+    base_url = ""
+
+    if config["needs_base_url"]:
+
+        base_url = st.text_input(
+            "Base URL",
+            value=(
+                os.getenv("OLLAMA_BASE_URL", config["default_base_url"])
+                if provider == "Ollama"
+                else config["default_base_url"]
+            ),
+            key=f"base_url_{provider}",
+            placeholder="https://host/v1",
+        ).strip()
+
+    has_credentials = (
+        not config["needs_key"]
+        or api_key
+        or (config["key_env"] and os.getenv(config["key_env"]))
     )
 
-    temperature = st.slider(
-        "Temperature",
-        0.0,
-        1.0,
-        0.1,
-        0.1,
+    live_models, error = [], None
+
+    if has_credentials and (not config["needs_base_url"] or base_url):
+
+        live_models, error = fetch_models(
+            provider,
+            api_key,
+            base_url,
+            st.session_state.model_nonce,
+        )
+
+    models = live_models or config["models"]
+
+    left, right = st.columns([3, 1])
+
+    with left:
+
+        choice = st.selectbox(
+            "Model",
+            models + [CUSTOM_MODEL],
+            key=f"model_{provider}",
+        )
+
+    with right:
+
+        st.write("")
+
+        if st.button("↻", help="Refresh the model list"):
+
+            st.session_state.model_nonce += 1
+
+            st.rerun()
+
+    if choice == CUSTOM_MODEL:
+
+        model = st.text_input(
+            "Custom model name",
+            key=f"custom_model_{provider}",
+        ).strip()
+
+    else:
+
+        model = choice
+
+    if error:
+
+        st.caption(f"Could not load the model list ({error[:80]}).")
+
+    temperature = st.slider("Temperature", 0.0, 1.0, 0.1, 0.1)
+
+    profile_names = list(CONTEXT_PROFILES.keys())
+
+    profile_name = st.selectbox(
+        "Context size",
+        profile_names,
+        index=profile_names.index(config["profile"]),
+        key=f"profile_{provider}",
+        help=(
+            "How much schema is sent to the model. Compact suits small "
+            "local models; Large suits big-context cloud models."
+        ),
     )
 
-    st.divider()
+    timeout = st.number_input(
+        "Request timeout (s)",
+        min_value=10,
+        max_value=900,
+        value=DEFAULT_TIMEOUT,
+        step=10,
+    )
 
-    if st.button(
-        "🔄 Discover & Index Database",
-        use_container_width=True,
-    ):
+    smart_select = st.checkbox(
+        "Smart table selection",
+        value=True,
+        help=(
+            "Asks the model to pick the needed tables from a shortlist "
+            "before writing SQL. One extra model call; much better at "
+            "choosing the right tables."
+        ),
+    )
 
-        with st.spinner(
-            "Discovering all accessible schemas..."
-        ):
+    summarize = st.checkbox(
+        "Summarize results with the model",
+        value=False,
+        help=(
+            "Sends the first 20 result rows to the model. "
+            "Leave off if results contain sensitive data."
+        ),
+    )
 
-            try:
+    return (
+        provider,
+        model,
+        temperature,
+        api_key,
+        base_url,
+        int(timeout),
+        CONTEXT_PROFILES[profile_name],
+        summarize,
+        smart_select,
+    )
 
-                metadata = inspect_database(
-                    datasource_name
-                )
 
-                documents = (
-                    metadata.to_documents()
-                )
+def render_glossary():
 
-                index = build_schema_index(
-                    documents,
-                    get_embeddings(),
-                )
+    st.caption(
+        "Define your own terms, one per line, as `term: meaning`. "
+        "They are used to find tables and are given to the model."
+    )
 
-                st.session_state.database_metadata = (
-                    metadata
-                )
+    text = st.text_area(
+        "Glossary",
+        value=load_glossary(),
+        height=160,
+        label_visibility="collapsed",
+        placeholder=(
+            "bus: the vehicle table\n"
+            "route: a run (public.run)\n"
+            "active students: student where status = 'ACTIVE'"
+        ),
+    )
 
-                st.session_state.schema_index = (
-                    index
-                )
+    if st.button("Save glossary", width="stretch"):
 
-                st.session_state.indexed_datasource = (
-                    datasource_name
-                )
+        save_glossary(text)
 
-                st.success(
-                    f"Indexed "
-                    f"{metadata.schema_count} schemas, "
-                    f"{metadata.table_count} tables "
-                    f"and "
-                    f"{metadata.view_count} views."
-                )
+        st.toast("Glossary saved.")
 
-            except Exception as exc:
 
-                st.error(
-                    f"Database discovery failed: {exc}"
-                )
+def render_privacy(embedding_model):
 
-    if st.button(
-        "🗑️ Clear Chat",
-        use_container_width=True,
-    ):
+    raw = st.session_state.raw_metadata
 
-        st.session_state.messages = []
+    if raw is None:
+
+        st.caption("Available after the database is discovered.")
+
+        return
+
+    current = st.session_state.privacy
+
+    schemas = [schema.name for schema in raw.schemas]
+
+    tables = [
+        f"{table.schema}.{table.name}"
+        for schema in raw.schemas
+        for table in schema.tables
+    ]
+
+    excluded_schemas = st.multiselect(
+        "Exclude schemas",
+        schemas,
+        default=[s for s in current.excluded_schemas if s in schemas],
+    )
+
+    excluded_tables = st.multiselect(
+        "Exclude tables",
+        tables,
+        default=[t for t in current.excluded_tables if t in tables],
+    )
+
+    patterns = st.text_input(
+        "Hide columns matching",
+        value=", ".join(current.column_patterns),
+        help="Comma-separated patterns, e.g. *password*, ssn, *_email",
+    )
+
+    include_values = st.checkbox(
+        "Include sample values in the index",
+        value=current.include_sample_values,
+        help="Common values of low-cardinality text columns.",
+    )
+
+    hide_infrastructure = st.checkbox(
+        "Hide infrastructure tables",
+        value=current.hide_infrastructure,
+        help=(
+            "Migration history, job schedulers and statistics tables "
+            "(flyway, quartz, shedlock, pg_stat_*). Keeps the model "
+            "focused on business data."
+        ),
+    )
+
+    if st.button("Apply privacy settings", width="stretch"):
+
+        st.session_state.privacy = PrivacySettings(
+            excluded_schemas=excluded_schemas,
+            excluded_tables=excluded_tables,
+            column_patterns=[
+                pattern.strip()
+                for pattern in patterns.split(",")
+                if pattern.strip()
+            ],
+            include_sample_values=include_values,
+            hide_infrastructure=hide_infrastructure,
+        )
+
+        with st.spinner("Rebuilding index..."):
+
+            rebuild_index(embedding_model)
+
+        st.toast("Privacy settings applied.")
 
         st.rerun()
 
 
-st.title(
-    "🗄️ RAG Database Copilot"
-)
+def render_sidebar():
 
-st.caption(
-    "Database-wide natural-language SQL assistant"
-)
+    with st.sidebar:
 
+        st.header("Setup")
 
-if (
-    st.session_state.indexed_datasource
-    != datasource_name
-):
-
-    st.info(
-        "Click **Discover & Index Database** "
-        "before asking questions."
-    )
-
-
-tab_chat, tab_explorer = st.tabs(
-    [
-        "💬 Chat",
-        "🌳 Database Explorer",
-    ]
-)
-
-
-with tab_explorer:
-
-    metadata = (
-        st.session_state.database_metadata
-    )
-
-    if not metadata:
-
-        st.info(
-            "Discover the database first."
+        datasource_name = st.selectbox(
+            "Datasource",
+            list(DATASOURCES.keys()),
         )
 
-    else:
+        embedding_options = list(EMBEDDING_CHOICES)
 
-        st.write(
-            f"**{metadata.schema_count} schemas** · "
-            f"**{metadata.table_count} tables** · "
-            f"**{metadata.view_count} views**"
+        if default_embedding_model() not in embedding_options:
+
+            embedding_options.insert(0, default_embedding_model())
+
+        embedding_model = st.session_state.get(
+            "embedding_model",
+            default_embedding_model(),
         )
 
-        for schema in metadata.schemas:
-
-            with st.expander(
-                f"📁 {schema.name}"
-            ):
-
-                for table in schema.tables:
-
-                    st.markdown(
-                        f"### 📋 {table.name}"
-                    )
-
-                    columns = []
-
-                    for column in table.columns:
-
-                        columns.append(
-                            {
-                                "Column": column.name,
-                                "Type": column.data_type,
-                                "Nullable": column.nullable,
-                                "Default": column.default,
-                                "PK": (
-                                    "✓"
-                                    if column.primary_key
-                                    else ""
-                                ),
-                            }
-                        )
-
-                    st.dataframe(
-                        columns,
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-                    if table.foreign_keys:
-
-                        st.caption(
-                            "Foreign Keys"
-                        )
-
-                        for fk in (
-                            table.foreign_keys
-                        ):
-
-                            st.write(
-                                f"`{fk.column}` → "
-                                f"`{fk.foreign_schema}."
-                                f"{fk.foreign_table}."
-                                f"{fk.foreign_column}`"
-                            )
-
-                    if table.indexes:
-
-                        st.caption(
-                            "Indexes"
-                        )
-
-                        for index in (
-                            table.indexes
-                        ):
-
-                            st.write(
-                                f"`{index.name}` — "
-                                f"{', '.join(index.columns)}"
-                            )
-
-
-with tab_chat:
-
-    for message in (
-        st.session_state.messages
-    ):
-
-        with st.chat_message(
-            message["role"]
+        if st.button(
+            "Discover & index database",
+            width="stretch",
+            type=(
+                "secondary"
+                if is_indexed(datasource_name)
+                else "primary"
+            ),
         ):
 
-            st.markdown(
-                message["content"]
+            index_database(datasource_name, embedding_model)
+
+        metadata = st.session_state.database_metadata
+
+        if is_indexed(datasource_name) and metadata:
+
+            st.success(
+                f"Ready: {metadata.schema_count} schemas, "
+                f"{metadata.table_count} tables, "
+                f"{metadata.view_count} views"
             )
 
-            if message.get("sql"):
+        else:
 
-                st.code(
-                    message["sql"],
-                    language="sql",
-                )
+            st.warning("Not indexed yet")
 
-            if message.get(
-                "blocked"
-            ):
+        st.divider()
 
-                st.warning(
-                    "Execution blocked. "
-                    "DML/DDL is review-only."
-                )
+        with st.expander("Model & provider", expanded=False):
 
-            if message.get(
-                "rows"
-            ) is not None:
+            model_settings = render_model_settings()
 
-                st.dataframe(
-                    message["rows"],
-                    use_container_width=True,
-                )
+        with st.expander("Business glossary", expanded=False):
 
-                st.caption(
-                    f'{message["row_count"]} rows · '
-                    f'{message["execution_ms"]:.2f} ms'
-                )
+            render_glossary()
 
-            if message.get(
-                "error"
-            ):
+        with st.expander("Privacy", expanded=False):
 
-                st.error(
-                    message["error"]
-                )
+            render_privacy(embedding_model)
 
+        with st.expander("Advanced", expanded=False):
 
-    question = st.chat_input(
-        "Ask anything about the database..."
+            st.selectbox(
+                "Embedding model",
+                embedding_options,
+                index=embedding_options.index(
+                    default_embedding_model()
+                ),
+                key="embedding_model",
+                help="Change, then re-index. Larger models match better "
+                "but download once and run slower.",
+            )
+
+        st.divider()
+
+        if st.button(
+            "Clear chat",
+            width="stretch",
+            disabled=not st.session_state.messages,
+        ):
+
+            st.session_state.messages = []
+
+            st.rerun()
+
+    (
+        provider,
+        model,
+        temperature,
+        api_key,
+        base_url,
+        timeout,
+        profile,
+        summarize,
+        smart_select,
+    ) = model_settings
+
+    return RunSettings(
+        datasource_name=datasource_name,
+        embedding_model=embedding_model,
+        provider=provider,
+        model=model,
+        temperature=temperature,
+        api_key=api_key,
+        base_url=base_url,
+        timeout=timeout,
+        profile=profile,
+        summarize=summarize,
+        smart_select=smart_select,
     )
 
 
-    if question:
+def approve_message(index):
 
-        st.session_state.messages.append(
-            {
-                "role": "user",
-                "content": question,
-            }
-        )
+    message = st.session_state.messages[index]
 
-        with st.chat_message(
-            "user"
-        ):
+    add_example(
+        message["datasource"],
+        message["question"],
+        message["sql"],
+    )
 
-            st.markdown(
-                question
+    message["approved"] = True
+
+
+def render_result(rows):
+
+    if rows.empty:
+
+        st.info("The query returned no rows.")
+
+        return
+
+    chart = chart_data(rows)
+
+    if chart is None:
+
+        st.dataframe(rows, width="stretch", hide_index=True)
+
+        return
+
+    kind, frame = chart
+
+    table_tab, chart_tab = st.tabs(["Table", "Chart"])
+
+    with table_tab:
+
+        st.dataframe(rows, width="stretch", hide_index=True)
+
+    with chart_tab:
+
+        if kind == "line":
+
+            st.line_chart(frame)
+
+        else:
+
+            st.bar_chart(frame)
+
+
+def render_message(message, index):
+
+    with st.chat_message(message["role"]):
+
+        if message["role"] == "user":
+
+            st.markdown(message["content"])
+
+            return
+
+        if message.get("error"):
+
+            st.error(message["error"])
+
+        elif message.get("clarify"):
+
+            st.info(f"💬 {message['content']}")
+
+        elif message.get("content"):
+
+            st.markdown(message["content"])
+
+        if message.get("summary"):
+
+            st.markdown(f"> {message['summary']}")
+
+        if message.get("blocked"):
+
+            st.warning(
+                "Review only: this SQL was not executed. "
+                "DML and DDL are never run by the app."
             )
 
+        rows = message.get("rows")
 
-        with st.chat_message(
-            "assistant"
-        ):
+        if rows is not None:
 
-            if not st.session_state.schema_index:
+            render_result(rows)
 
-                st.warning(
-                    "Discover and index the "
-                    "database first."
+        if message.get("sql"):
+
+            label = (
+                "SQL (auto-corrected after an error)"
+                if message.get("corrected")
+                else "SQL"
+            )
+
+            with st.expander(label, expanded=rows is None):
+
+                st.code(message["sql"], language="sql")
+
+        if rows is not None and not rows.empty:
+
+            download, approve, _ = st.columns([1, 1, 3])
+
+            with download:
+
+                st.download_button(
+                    "⬇ CSV",
+                    rows.to_csv(index=False).encode("utf-8"),
+                    file_name="result.csv",
+                    mime="text/csv",
+                    key=f"download_{index}",
                 )
 
-                st.stop()
+            with approve:
 
+                st.button(
+                    "✓ Saved" if message.get("approved") else "👍 Correct",
+                    key=f"approve_{index}",
+                    on_click=approve_message,
+                    args=(index,),
+                    disabled=bool(message.get("approved")),
+                    help=(
+                        "Save this question and SQL as a verified example "
+                        "for future similar questions."
+                    ),
+                )
+
+        details = []
+
+        if message.get("examples_used"):
+
+            details.append(
+                f"{message['examples_used']} approved example(s) used"
+            )
+
+        if message.get("input_tokens") or message.get("output_tokens"):
+
+            details.append(
+                f"{message['input_tokens']:,} tokens in / "
+                f"{message['output_tokens']:,} out"
+            )
+
+        if message.get("tables"):
+
+            details.append(
+                "Tables considered: " + ", ".join(message["tables"])
+            )
+
+        if details:
+
+            st.caption(" · ".join(details))
+
+
+def _history_text(history):
+
+    return "\n".join(
+        f"{'User' if role == 'human' else 'Assistant'}: {text[:300]}"
+        for role, text in history[-4:]
+    )
+
+
+def answer_question(question, history, settings, status):
+
+    message = {
+        "role": "assistant",
+        "question": question,
+        "datasource": settings.datasource_name,
+        "input_tokens": 0,
+        "output_tokens": 0,
+    }
+
+    def add_usage(response_or_tuple):
+
+        if isinstance(response_or_tuple, tuple):
+
+            _, tokens_in, tokens_out = response_or_tuple
+
+        else:
+
+            tokens_in = response_or_tuple.input_tokens
+            tokens_out = response_or_tuple.output_tokens
+
+        message["input_tokens"] += tokens_in
+        message["output_tokens"] += tokens_out
+
+    profile = settings.profile
+    policy = st.session_state.access_policy
+
+    try:
+
+        glossary = load_glossary()
+
+        search_query = expand_query(question, glossary)
+
+        llm = get_llm(
+            provider=settings.provider,
+            model=settings.model,
+            temperature=settings.temperature,
+            api_key=settings.api_key,
+            base_url=settings.base_url,
+            timeout=settings.timeout,
+        )
+
+        index = st.session_state.schema_index
+
+        documents = None
+
+        if settings.smart_select:
+
+            status.update(label="Choosing relevant tables...")
+
+            candidates = retrieve_candidates(
+                index,
+                search_query,
+                limit=profile["shortlist"],
+                fetch_k=profile["fetch_k"],
+            )
 
             try:
 
-                with st.spinner(
-                    "Finding relevant database objects..."
-                ):
-
-                    retriever = (
-                        create_retriever(
-                            st.session_state.schema_index
-                        )
-                    )
-
-                    documents = (
-                        retriever.invoke(
-                            question
-                        )
-                    )
-
-                    context = (
-                        build_context(
-                            documents
-                        )
-                    )
-
-
-                with st.spinner(
-                    "Generating SQL..."
-                ):
-
-                    llm = get_llm(
-                        provider=provider,
-                        model=model,
-                        temperature=temperature,
-                    )
-
-                    response = (
-                        process_question(
-                            llm=llm,
-                            question=question,
-                            context=context,
-                        )
-                    )
-
-
-                st.subheader(
-                    "Generated SQL"
+                chosen, tokens_in, tokens_out = select_tables(
+                    llm,
+                    question,
+                    candidates,
+                    history_text=_history_text(history),
+                    glossary=glossary,
+                    max_tables=profile["k"],
                 )
 
-                st.code(
-                    response.sql,
-                    language="sql",
+                message["input_tokens"] += tokens_in
+                message["output_tokens"] += tokens_out
+
+                if chosen:
+
+                    documents = add_related_tables(
+                        index,
+                        chosen,
+                        profile["max_neighbors"],
+                    )
+
+            except Exception:
+
+                documents = None
+
+            if documents is None:
+
+                documents = add_related_tables(
+                    index,
+                    candidates[: profile["k"]],
+                    profile["max_neighbors"],
                 )
 
+        else:
 
-                if response.operation != "READ":
+            status.update(label="Finding relevant tables...")
 
-                    st.warning(
-                        f"Detected operation: "
-                        f"**{response.operation}**"
-                    )
+            documents = retrieve_documents(index, search_query, profile)
 
-                    st.info(
-                        "This SQL is available for "
-                        "review/copying only. "
-                        "DML and DDL are never "
-                        "executed."
-                    )
+        context = build_context(documents, profile)
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": (
-                                f"Generated "
-                                f"{response.operation} "
-                                "SQL. Execution was blocked."
-                            ),
-                            "sql": response.sql,
-                            "blocked": True,
-                        }
-                    )
+        message["tables"] = [
+            document.metadata["key"]
+            for document in documents
+            if "key" in document.metadata
+        ]
 
-                    st.stop()
+        try:
 
+            found = find_similar(
+                get_embeddings(st.session_state.index_embedding_model),
+                st.session_state.index_embedding_model,
+                settings.datasource_name,
+                question,
+                profile["examples"],
+            )
 
-                validation = validate_sql(
-                    response.sql
+        except Exception:
+
+            found = []
+
+        examples = format_examples(found)
+
+        message["examples_used"] = len(found)
+
+        status.update(label="Generating SQL...")
+
+        response = process_question(
+            llm=llm,
+            question=question,
+            context=context,
+            history=history,
+            examples=examples,
+            glossary=glossary,
+        )
+
+        add_usage(response)
+
+        message["sql"] = response.sql
+
+        if response.operation != "READ":
+
+            message["content"] = (
+                f"Generated **{response.operation}** SQL for review."
+            )
+
+            message["blocked"] = True
+
+            return message
+
+        validation = validate_sql(response.sql, policy)
+
+        if not validation.allowed:
+
+            message["error"] = (
+                "The generated SQL was rejected by the "
+                f"safety guard: {validation.reason}"
+            )
+
+            return message
+
+        status.update(label="Running query...")
+
+        result = execute_query(settings.datasource_name, response.sql)
+
+        if result.error:
+
+            status.update(label="Query failed, retrying...")
+
+            try:
+
+                repaired = repair_question(
+                    llm=llm,
+                    question=question,
+                    context=context,
+                    history=history,
+                    failed_sql=response.sql,
+                    error=result.error,
+                    examples=examples,
+                    glossary=glossary,
                 )
 
+                add_usage(repaired)
 
-                if not validation.allowed:
+                if validate_sql(repaired.sql, policy).allowed:
 
-                    st.error(
-                        validation.reason
+                    retry = execute_query(
+                        settings.datasource_name,
+                        repaired.sql,
                     )
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": (
-                                "The generated SQL "
-                                "failed the read-only "
-                                "SQL guard."
-                            ),
-                            "sql": response.sql,
-                            "error": validation.reason,
-                        }
-                    )
+                    if not retry.error:
 
-                    st.stop()
+                        result = retry
+                        message["sql"] = repaired.sql
+                        message["corrected"] = True
 
+            except Exception:
 
-                with st.spinner(
-                    "Executing query..."
-                ):
+                pass
 
-                    result = execute_query(
-                        datasource_name,
-                        response.sql,
-                    )
+        if result.error:
 
+            message["error"] = f"The query failed: {result.error}"
 
-                if result.error:
+            return message
 
-                    st.error(
-                        result.error
-                    )
+        message["rows"] = result.rows
+        message["row_count"] = result.row_count
+        message["content"] = (
+            f"**{result.row_count} rows** in {result.execution_ms:.0f} ms"
+        )
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": (
-                                "The query failed."
-                            ),
-                            "sql": response.sql,
-                            "error": result.error,
-                        }
-                    )
+        if settings.summarize and not result.rows.empty:
 
-                else:
+            status.update(label="Summarizing...")
 
-                    st.success(
-                        f"{result.row_count} rows "
-                        f"returned in "
-                        f"{result.execution_ms:.2f} ms"
-                    )
+            try:
 
-                    st.dataframe(
-                        result.rows,
-                        use_container_width=True,
-                    )
+                summary = summarize_result(llm, question, result.rows)
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": (
-                                "Query executed successfully."
-                            ),
-                            "sql": response.sql,
-                            "rows": result.rows,
-                            "row_count": result.row_count,
-                            "execution_ms": (
-                                result.execution_ms
-                            ),
-                        }
-                    )
+                message["summary"] = summary[0]
+
+                add_usage(summary)
+
+            except Exception:
+
+                pass
+
+        return message
+
+    except NeedsClarification as exc:
+
+        message["clarify"] = True
+        message["content"] = str(exc)
+
+        return message
+
+    except NoSQLGenerated as exc:
+
+        message["content"] = str(exc)
+
+        return message
+
+    except Exception as exc:
+
+        message["error"] = str(exc)
+
+        return message
 
 
-            except Exception as exc:
+def render_chat(datasource_name, busy):
 
-                st.error(
-                    str(exc)
-                )
+    indexed = is_indexed(datasource_name)
 
-                st.session_state.messages.append(
+    if busy:
+
+        pass
+
+    elif not st.session_state.messages and not indexed:
+
+        st.info(
+            "**Get started**\n\n"
+            "1. Pick a datasource in the sidebar.\n"
+            "2. Click **Discover & index database**.\n"
+            "3. Ask a question in the box at the bottom."
+        )
+
+    elif not st.session_state.messages:
+
+        st.markdown("**Ask a question below, or try one of these:**")
+
+        for example in EXAMPLE_QUESTIONS:
+
+            if st.button(example, key=f"example_{example}"):
+
+                st.session_state.pending_question = example
+
+                st.rerun()
+
+    for index, message in enumerate(st.session_state.messages):
+
+        render_message(message, index)
+
+
+def render_explorer():
+
+    metadata = st.session_state.database_metadata
+
+    if not metadata:
+
+        st.info("Index the database to browse its schema.")
+
+        return
+
+    schema_name = st.selectbox(
+        "Schema",
+        [schema.name for schema in metadata.schemas],
+    )
+
+    search = st.text_input(
+        "Filter tables",
+        placeholder="e.g. student",
+    ).strip().lower()
+
+    schema = next(
+        schema
+        for schema in metadata.schemas
+        if schema.name == schema_name
+    )
+
+    tables = [
+        table
+        for table in schema.tables
+        if search in table.name.lower()
+    ]
+
+    st.caption(f"{len(tables)} tables")
+
+    for table in tables[:EXPLORER_TABLE_LIMIT]:
+
+        with st.expander(
+            f"{table.name}"
+            + (
+                f"  [{table.kind}]"
+                if table.kind != "table"
+                else ""
+            )
+            + f"  ({len(table.columns)} columns)"
+        ):
+
+            if table.comment:
+
+                st.caption(table.comment)
+
+            st.dataframe(
+                [
                     {
-                        "role": "assistant",
-                        "content": (
-                            "The request could "
-                            "not be completed."
-                        ),
-                        "error": str(exc),
+                        "Column": column.name,
+                        "Type": column.data_type,
+                        "Nullable": column.nullable,
+                        "Default": column.default,
+                        "PK": "✓" if column.primary_key else "",
+                        "Values": ", ".join(column.values),
+                        "Description": column.comment or "",
                     }
+                    for column in table.columns
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+
+            for fk in table.foreign_keys:
+
+                kind = "inferred" if fk.inferred else "FK"
+
+                st.write(
+                    f"`{fk.column}` → "
+                    f"`{fk.foreign_schema}.{fk.foreign_table}."
+                    f"{fk.foreign_column}` ({kind})"
                 )
+
+    if len(tables) > EXPLORER_TABLE_LIMIT:
+
+        st.caption(
+            f"Showing the first {EXPLORER_TABLE_LIMIT}. "
+            "Use the filter to narrow down."
+        )
+
+
+def main():
+
+    init_state()
+
+    settings = render_sidebar()
+
+    datasource_name = settings.datasource_name
+
+    st.title("🗄️ RAG Database Copilot")
+
+    tab_chat, tab_explorer = st.tabs(
+        ["💬 Chat", "🌳 Database Explorer"]
+    )
+
+    indexed = is_indexed(datasource_name)
+
+    typed = st.chat_input(
+        (
+            "Ask a question about your database..."
+            if indexed
+            else "Index the database first (sidebar)"
+        ),
+        disabled=not indexed,
+    )
+
+    question = typed or st.session_state.pending_question
+
+    st.session_state.pending_question = None
+
+    with tab_explorer:
+
+        render_explorer()
+
+    with tab_chat:
+
+        render_chat(datasource_name, busy=bool(question))
+
+        if question and indexed:
+
+            if not settings.model:
+
+                st.warning("Choose or enter a model in the sidebar.")
+
+                return
+
+            history = build_history(
+                st.session_state.messages,
+                settings.profile["history_turns"],
+            )
+
+            user_message = {"role": "user", "content": question}
+
+            st.session_state.messages.append(user_message)
+
+            render_message(
+                user_message,
+                len(st.session_state.messages) - 1,
+            )
+
+            with st.chat_message("assistant"):
+
+                with st.status("Working...", expanded=False) as status:
+
+                    reply = answer_question(
+                        question,
+                        history,
+                        settings,
+                        status,
+                    )
+
+                    failed = bool(reply.get("error"))
+
+                    status.update(
+                        label="Failed" if failed else "Done",
+                        state="error" if failed else "complete",
+                    )
+
+            st.session_state.messages.append(reply)
+
+            st.rerun()
+
+
+main()

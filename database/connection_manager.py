@@ -24,7 +24,6 @@ def get_engine(
         "host",
         "database",
         "username",
-        "password",
     ]
 
     missing = [
@@ -43,7 +42,7 @@ def get_engine(
     url = URL.create(
         "postgresql+psycopg",
         username=config["username"],
-        password=config["password"],
+        password=config["password"] or None,
         host=config["host"],
         port=config["port"],
         database=config["database"],

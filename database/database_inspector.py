@@ -1,4 +1,5 @@
 from sqlalchemy import text
+import os
 
 from database.connection_manager import get_connection
 from database.schema_metadata import (
@@ -9,6 +10,22 @@ from database.schema_metadata import (
     SchemaMetadata,
     TableMetadata, infer_relationships,
 )
+from flyway.flyway_inspector import build_flyway_object_state, inspect_flyway_directory
+
+
+RELKIND_NAMES = {
+    "r": "table",
+    "p": "table",
+    "v": "view",
+    "m": "materialized view",
+    "f": "foreign table",
+}
+
+TEXT_TYPE_PREFIXES = ("text", "character", "boolean")
+
+MAX_DISTINCT_VALUES = 15
+MAX_VALUES_PER_COLUMN = 10
+MAX_VALUE_LENGTH = 40
 
 
 def inspect_database(datasource_name: str) -> DatabaseMetadata:
@@ -16,22 +33,91 @@ def inspect_database(datasource_name: str) -> DatabaseMetadata:
     columns_sql = text(
         """
         SELECT
-            table_schema,
-            table_name,
-            column_name,
-            data_type,
-            is_nullable,
-            column_default,
-            ordinal_position
-        FROM information_schema.columns
-        WHERE table_schema NOT IN (
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            c.relkind AS relkind,
+            obj_description(c.oid, 'pg_class')
+                AS table_comment,
+            c.reltuples::bigint AS approx_rows,
+            a.attname AS column_name,
+            format_type(a.atttypid, a.atttypmod)
+                AS data_type,
+            CASE WHEN a.attnotnull
+                THEN 'NO' ELSE 'YES'
+            END AS is_nullable,
+            pg_get_expr(d.adbin, d.adrelid)
+                AS column_default,
+            col_description(c.oid, a.attnum)
+                AS column_comment
+        FROM pg_class c
+        JOIN pg_namespace n
+            ON n.oid = c.relnamespace
+        JOIN pg_attribute a
+            ON a.attrelid = c.oid
+           AND a.attnum > 0
+           AND NOT a.attisdropped
+        LEFT JOIN pg_attrdef d
+            ON d.adrelid = c.oid
+           AND d.adnum = a.attnum
+        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+          AND n.nspname NOT IN (
+              'pg_catalog',
+              'information_schema',
+              'pg_toast'
+          )
+          AND n.nspname NOT LIKE 'pg\\_temp\\_%'
+          AND NOT c.relispartition
+          AND has_table_privilege(c.oid, 'SELECT')
+        ORDER BY
+            n.nspname,
+            c.relname,
+            a.attnum
+        """
+    )
+
+    enums_sql = text(
+        """
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            a.attname AS column_name,
+            array_agg(
+                e.enumlabel::text
+                ORDER BY e.enumsortorder
+            ) AS labels
+        FROM pg_attribute a
+        JOIN pg_class c
+            ON c.oid = a.attrelid
+        JOIN pg_namespace n
+            ON n.oid = c.relnamespace
+        JOIN pg_enum e
+            ON e.enumtypid = a.atttypid
+        WHERE a.attnum > 0
+          AND NOT a.attisdropped
+          AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+          AND n.nspname NOT IN (
+              'pg_catalog',
+              'information_schema'
+          )
+        GROUP BY n.nspname, c.relname, a.attname
+        """
+    )
+
+    common_values_sql = text(
+        """
+        SELECT
+            schemaname AS table_schema,
+            tablename AS table_name,
+            attname AS column_name,
+            most_common_vals::text::text[] AS vals
+        FROM pg_stats
+        WHERE schemaname NOT IN (
             'pg_catalog',
             'information_schema'
         )
-        ORDER BY
-            table_schema,
-            table_name,
-            ordinal_position
+          AND n_distinct > 0
+          AND n_distinct <= :max_distinct
+          AND most_common_vals IS NOT NULL
         """
     )
 
@@ -146,17 +232,6 @@ def inspect_database(datasource_name: str) -> DatabaseMetadata:
         """
     )
 
-    views_sql = text(
-        """
-        SELECT COUNT(*)
-        FROM information_schema.views
-        WHERE table_schema NOT IN (
-            'pg_catalog',
-            'information_schema'
-        )
-        """
-    )
-
     with get_connection(datasource_name) as connection:
 
         columns = (
@@ -187,9 +262,22 @@ def inspect_database(datasource_name: str) -> DatabaseMetadata:
             .all()
         )
 
-        view_count = connection.execute(
-            views_sql
-        ).scalar_one()
+        enums = (
+            connection
+            .execute(enums_sql)
+            .mappings()
+            .all()
+        )
+
+        common_values = (
+            connection
+            .execute(
+                common_values_sql,
+                {"max_distinct": MAX_DISTINCT_VALUES},
+            )
+            .mappings()
+            .all()
+        )
 
     primary_key_set = {
         (
@@ -217,6 +305,12 @@ def inspect_database(datasource_name: str) -> DatabaseMetadata:
             tables[key] = TableMetadata(
                 schema=row["table_schema"],
                 name=row["table_name"],
+                kind=RELKIND_NAMES.get(
+                    row["relkind"],
+                    "table",
+                ),
+                comment=row["table_comment"],
+                approx_rows=row["approx_rows"],
             )
 
         tables[key].columns.append(
@@ -231,8 +325,56 @@ def inspect_database(datasource_name: str) -> DatabaseMetadata:
                     row["column_name"],
                 )
                 in primary_key_set,
+                comment=row["column_comment"],
             )
         )
+
+    # ---------------------------------------------------------
+    # Enum labels + common values
+    # ---------------------------------------------------------
+
+    column_lookup = {
+        (key[0], key[1], column.name): column
+        for key, table in tables.items()
+        for column in table.columns
+    }
+
+    for row in common_values:
+
+        column = column_lookup.get(
+            (
+                row["table_schema"],
+                row["table_name"],
+                row["column_name"],
+            )
+        )
+
+        if column is None or not column.data_type.startswith(TEXT_TYPE_PREFIXES):
+            continue
+
+        column.values = [
+            str(value)[:MAX_VALUE_LENGTH]
+            for value in (row["vals"] or [])
+            if value is not None
+        ][:MAX_VALUES_PER_COLUMN]
+
+        column.values_kind = "common"
+
+    for row in enums:
+
+        column = column_lookup.get(
+            (
+                row["table_schema"],
+                row["table_name"],
+                row["column_name"],
+            )
+        )
+
+        if column is None:
+            continue
+
+        column.values = list(row["labels"])
+        column.values_kind = "enum"
 
     # ---------------------------------------------------------
     # Foreign Keys
@@ -310,9 +452,59 @@ def inspect_database(datasource_name: str) -> DatabaseMetadata:
             schemas.values(),
             key=lambda schema: schema.name,
         ),
-        view_count=int(view_count),
     )
 
+    flyway_path = os.getenv(
+        "FLYWAY_MIGRATION_PATH"
+    )
+
+    if flyway_path:
+        database_metadata = apply_flyway_state(
+            database_metadata,
+            flyway_path,
+        )
+
     infer_relationships(database_metadata)
+
+    return database_metadata
+
+def apply_flyway_state(
+    database_metadata: DatabaseMetadata,
+    migration_directory: str,
+) -> DatabaseMetadata:
+
+    migrations = inspect_flyway_directory(
+        migration_directory
+    )
+
+    flyway_state = build_flyway_object_state(
+        migrations
+    )
+
+    for schema in database_metadata.schemas:
+
+        for table in schema.tables:
+
+            key = (
+                f"{schema.name}."
+                f"{table.name}"
+            )
+
+            state = flyway_state.get(key)
+
+            if state is None:
+                continue
+
+            table.flyway_managed = True
+            table.flyway_active = state.exists
+            table.flyway_created_by = (
+                state.created_by
+            )
+            table.flyway_dropped_by = (
+                state.dropped_by
+            )
+            table.flyway_last_migration = (
+                state.last_migration
+            )
 
     return database_metadata
