@@ -19,6 +19,7 @@ STATEMENT_TIMEOUT_MS = 30_000
 def execute_query(
     datasource_name: str,
     sql: str,
+    config: dict | None = None,
 ) -> QueryResult:
 
     started = time.perf_counter()
@@ -26,7 +27,8 @@ def execute_query(
     try:
 
         with get_connection(
-            datasource_name
+            datasource_name,
+            config,
         ) as connection:
 
             connection.execute(

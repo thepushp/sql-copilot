@@ -28,7 +28,10 @@ MAX_VALUES_PER_COLUMN = 10
 MAX_VALUE_LENGTH = 40
 
 
-def inspect_database(datasource_name: str) -> DatabaseMetadata:
+def inspect_database(
+    datasource_name: str,
+    config: dict | None = None,
+) -> DatabaseMetadata:
 
     columns_sql = text(
         """
@@ -232,7 +235,7 @@ def inspect_database(datasource_name: str) -> DatabaseMetadata:
         """
     )
 
-    with get_connection(datasource_name) as connection:
+    with get_connection(datasource_name, config) as connection:
 
         columns = (
             connection

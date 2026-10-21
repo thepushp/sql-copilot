@@ -1,6 +1,8 @@
 import os
 from dataclasses import dataclass
 
+from sqlalchemy import text
+
 import streamlit as st
 
 from config.datasource_config import DATASOURCES
@@ -11,6 +13,7 @@ from config.privacy import (
     apply_privacy,
 )
 
+from database.connection_manager import get_engine
 from database.database_inspector import inspect_database
 from database.query_executor import execute_query
 from database.sql_guard import validate_sql
@@ -58,6 +61,8 @@ from services.query_service import (
 )
 
 
+SSL_MODES = ["default", "disable", "prefer", "require", "verify-full"]
+
 EXPLORER_TABLE_LIMIT = 50
 CUSTOM_MODEL = "Custom..."
 
@@ -88,6 +93,7 @@ class RunSettings:
     profile: dict
     summarize: bool
     smart_select: bool
+    datasource_config: dict | None = None
 
 
 def init_state():
@@ -103,6 +109,7 @@ def init_state():
         "index_embedding_model": None,
         "pending_question": None,
         "model_nonce": 0,
+        "custom_datasources": {},
     }
 
     for key, value in defaults.items():
@@ -118,6 +125,117 @@ def is_indexed(datasource_name):
         st.session_state.schema_index is not None
         and st.session_state.indexed_datasource == datasource_name
     )
+
+
+def all_datasources():
+
+    merged = dict(DATASOURCES)
+
+    merged.update(st.session_state.custom_datasources)
+
+    return merged
+
+
+def is_configured(config):
+
+    return bool(
+        config
+        and config.get("host")
+        and config.get("database")
+        and config.get("username")
+    )
+
+
+def _connection_from_form():
+
+    return {
+        "driver": "postgresql",
+        "host": st.session_state.get("conn_host", "").strip(),
+        "port": int(st.session_state.get("conn_port", 5432)),
+        "database": st.session_state.get("conn_db", "").strip(),
+        "username": st.session_state.get("conn_user", "").strip(),
+        "password": st.session_state.get("conn_password", ""),
+        "sslmode": (
+            None
+            if st.session_state.get("conn_ssl", "default") == "default"
+            else st.session_state.conn_ssl
+        ),
+    }
+
+
+def add_connection():
+
+    name = st.session_state.get("conn_name", "").strip()
+
+    config = _connection_from_form()
+
+    if not name:
+
+        st.session_state.conn_message = ("error", "Enter a connection name.")
+
+        return
+
+    if name in DATASOURCES:
+
+        st.session_state.conn_message = (
+            "error",
+            f"'{name}' is already defined in the environment. "
+            "Choose another name.",
+        )
+
+        return
+
+    if not is_configured(config):
+
+        st.session_state.conn_message = (
+            "error",
+            "Host, database and username are required.",
+        )
+
+        return
+
+    st.session_state.custom_datasources[name] = config
+
+    st.session_state.datasource_select = name
+
+    st.session_state.conn_password = ""
+    st.session_state.conn_name = ""
+
+    st.session_state.conn_message = (
+        "success",
+        f"Added '{name}'. Click Discover & index database.",
+    )
+
+
+def remove_connection(name):
+
+    st.session_state.custom_datasources.pop(name, None)
+
+    if st.session_state.indexed_datasource == name:
+
+        st.session_state.indexed_datasource = None
+        st.session_state.schema_index = None
+
+    st.session_state.datasource_select = next(iter(DATASOURCES))
+
+
+def test_connection(config, label):
+
+    if not is_configured(config):
+
+        return "error", "Host, database and username are required."
+
+    try:
+
+        with get_engine(label, config).connect() as connection:
+
+            connection.execute(text("SELECT 1"))
+
+    except Exception as exc:
+
+        return "error", f"Connection failed: {str(exc).splitlines()[0][:200]}"
+
+    return "success", "Connection works."
 
 
 def rebuild_index(embedding_model):
@@ -138,13 +256,13 @@ def rebuild_index(embedding_model):
     st.session_state.index_embedding_model = embedding_model
 
 
-def index_database(datasource_name, embedding_model):
+def index_database(datasource_name, embedding_model, config=None):
 
     with st.spinner("Discovering schemas and building index..."):
 
         try:
 
-            raw = inspect_database(datasource_name)
+            raw = inspect_database(datasource_name, config)
 
             st.session_state.raw_metadata = raw
             st.session_state.indexed_datasource = datasource_name
@@ -322,6 +440,73 @@ def render_model_settings():
     )
 
 
+def render_connection_form():
+
+    st.caption(
+        "Credentials entered here are kept only for this browser session "
+        "and are never written to disk. For permanent connections, use "
+        "the .env file."
+    )
+
+    st.text_input("Connection name", key="conn_name", placeholder="Prod replica")
+
+    host, port = st.columns([3, 2])
+
+    with host:
+
+        st.text_input("Host", key="conn_host", value="localhost")
+
+    with port:
+
+        st.number_input(
+            "Port",
+            key="conn_port",
+            min_value=1,
+            max_value=65535,
+            value=5432,
+        )
+
+    st.text_input("Database", key="conn_db")
+
+    st.text_input("Username", key="conn_user")
+
+    st.text_input("Password", key="conn_password", type="password")
+
+    st.selectbox(
+        "SSL mode",
+        SSL_MODES,
+        key="conn_ssl",
+        help="Use 'require' for most cloud databases.",
+    )
+
+    test, add = st.columns(2)
+
+    with test:
+
+        if st.button("Test", width="stretch", key="conn_test"):
+
+            st.session_state.conn_message = test_connection(
+                _connection_from_form(),
+                "connection-test",
+            )
+
+    with add:
+
+        st.button(
+            "Add",
+            width="stretch",
+            key="conn_add",
+            type="primary",
+            on_click=add_connection,
+        )
+
+    message = st.session_state.pop("conn_message", None)
+
+    if message:
+
+        getattr(st, message[0])(message[1])
+
+
 def render_glossary():
 
     st.caption(
@@ -431,10 +616,41 @@ def render_sidebar():
 
         st.header("Setup")
 
+        datasources = all_datasources()
+
         datasource_name = st.selectbox(
             "Datasource",
-            list(DATASOURCES.keys()),
+            list(datasources),
+            index=next(
+                (
+                    position
+                    for position, name in enumerate(datasources)
+                    if is_configured(datasources[name])
+                ),
+                0,
+            ),
+            key="datasource_select",
+            format_func=lambda name: (
+                name
+                if is_configured(datasources[name])
+                else f"{name} (not configured)"
+            ),
         )
+
+        datasource_config = datasources[datasource_name]
+
+        if datasource_name in st.session_state.custom_datasources:
+
+            st.button(
+                "Remove this connection",
+                on_click=remove_connection,
+                args=(datasource_name,),
+                width="stretch",
+            )
+
+        with st.expander("Add a connection", expanded=False):
+
+            render_connection_form()
 
         embedding_options = list(EMBEDDING_CHOICES)
 
@@ -457,7 +673,11 @@ def render_sidebar():
             ),
         ):
 
-            index_database(datasource_name, embedding_model)
+            index_database(
+                datasource_name,
+                embedding_model,
+                datasource_config,
+            )
 
         metadata = st.session_state.database_metadata
 
@@ -536,6 +756,7 @@ def render_sidebar():
         profile=profile,
         summarize=summarize,
         smart_select=smart_select,
+        datasource_config=datasource_config,
     )
 
 
@@ -861,7 +1082,11 @@ def answer_question(question, history, settings, status):
 
         status.update(label="Running query...")
 
-        result = execute_query(settings.datasource_name, response.sql)
+        result = execute_query(
+            settings.datasource_name,
+            response.sql,
+            settings.datasource_config,
+        )
 
         if result.error:
 
@@ -887,6 +1112,7 @@ def answer_question(question, history, settings, status):
                     retry = execute_query(
                         settings.datasource_name,
                         repaired.sql,
+                        settings.datasource_config,
                     )
 
                     if not retry.error:

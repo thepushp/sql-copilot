@@ -13,6 +13,10 @@ streamlit run app.py
 
 No tests, linter, or build step exist. Only PostgreSQL is supported (`postgresql+psycopg`).
 
+## Datasources
+
+Two sources: `.env` (DEV_DB_*/TEST_DB_*, always available) and the sidebar **Add a connection** form (host, port, database, username, password, SSL mode, Test button). UI connections live only in `st.session_state.custom_datasources` for that browser session; passwords are never written to disk and are not shared between sessions. The resolved config is passed explicitly (`inspect_database(name, config)`, `execute_query(name, sql, config)`); engines are cached by name plus credentials in `database/connection_manager.py`.
+
 ## Environment (.env)
 
 - `DEV_DB_*` / `TEST_DB_*`: HOST, PORT, NAME, USERNAME, PASSWORD (`*_SCHEMA` is in `.env.example` but never read).
