@@ -52,7 +52,7 @@ Ollama, OpenAI, Anthropic, Google, and "OpenAI-compatible" (any base URL). API k
 
 ## Dead code
 
-`services/sql_generation_service.py` is an unused older prompt plus `generate_sql()`. It is safe to delete. Empty placeholders: `config/settings.py`, `rag/vector_store.py`, `models/datasource.py`.
+Empty placeholders (safe to delete): `config/settings.py`, `rag/vector_store.py`, `models/datasource.py`.
 
 ## Quality and safety design
 
