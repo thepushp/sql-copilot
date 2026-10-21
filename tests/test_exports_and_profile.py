@@ -224,3 +224,23 @@ class TestRealDatabaseTypes:
         frame = pd.DataFrame({"n": pd.Series([np.int64(5), np.int64(6)], dtype=object)})
 
         assert [r["n"] for r in json.loads(to_json(frame))] == [5, 6]
+
+
+class TestDisplaySafe:
+
+    def test_mixed_list_and_scalar_column_can_become_an_arrow_table(self):
+        import pandas as pd
+        import pyarrow as pa
+        from services.exports import display_safe
+
+        frame = pd.DataFrame({"fees": [[1, 2], 5, None, {"a": 1}], "n": [1, 2, 3, 4]})
+
+        with __import__("pytest").raises(Exception):
+            pa.Table.from_pandas(frame)
+
+        safe = display_safe(frame)
+
+        assert pa.Table.from_pandas(safe).num_rows == 4
+        assert safe["fees"].tolist()[0] == "[1, 2]"
+        assert safe["fees"].tolist()[1] == "5"
+        assert pd.isna(safe["fees"].tolist()[2])

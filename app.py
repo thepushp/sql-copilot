@@ -35,6 +35,7 @@ from rag.schema_indexer import build_schema_index
 
 from services.audit import audit, configure_logging, get_logger
 from services.charting import chart_data
+from services.exports import display_safe
 from services.glossary import expand_query, load_glossary, save_glossary
 from services.table_selector import select_tables
 from services.er_interactive import graph_data, viewer_height, viewer_html
@@ -1063,7 +1064,7 @@ def render_result(rows):
 
     if chart is None:
 
-        st.dataframe(rows, width="stretch", hide_index=True)
+        st.dataframe(display_safe(rows), width="stretch", hide_index=True)
 
         return
 
@@ -1073,7 +1074,7 @@ def render_result(rows):
 
     with table_tab:
 
-        st.dataframe(rows, width="stretch", hide_index=True)
+        st.dataframe(display_safe(rows), width="stretch", hide_index=True)
 
     with chart_tab:
 

@@ -98,6 +98,28 @@ def _converted(frame, converter):
     return result
 
 
+def display_safe(data):
+    """A frame the grid can draw: mixed list/scalar columns become JSON text."""
+
+    frame = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+
+    for name in frame.columns:
+
+        column = frame[name]
+
+        if column.dtype != object:
+            continue
+
+        converted = column.map(_cell)
+
+        if column.map(lambda v: isinstance(v, _CONTAINERS)).any():
+            converted = converted.map(lambda v: None if _is_missing(v) else str(v))
+
+        frame[name] = converted
+
+    return frame
+
+
 def to_csv(frame):
 
     return _converted(frame, _cell).to_csv(index=False).encode("utf-8-sig")

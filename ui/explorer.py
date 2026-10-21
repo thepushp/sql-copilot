@@ -19,7 +19,7 @@ from services.er_diagram import (
     table_index,
 )
 from services.er_interactive import graph_data, viewer_height, viewer_html
-from services.exports import EXPORT_ROW_LIMIT, build_exports
+from services.exports import EXPORT_ROW_LIMIT, build_exports, display_safe
 from services.schema_search import search_metadata
 from services.sql_builders import (
     count_query,
@@ -396,14 +396,14 @@ def render_data(settings, table, key):
         return
 
     st.dataframe(
-        frame,
+        display_safe(frame),
         hide_index=True,
         width="stretch",
         height=min(36 * (len(frame) + 1) + 4, 560),
     )
 
     with st.expander("Column statistics for this page"):
-        st.dataframe(profile(frame), hide_index=True, width="stretch")
+        st.dataframe(display_safe(profile(frame)), hide_index=True, width="stretch")
 
 
 def _count_key(settings, key):
@@ -562,7 +562,7 @@ def render_sql(settings, table, key, index):
         if saved["error"]:
             st.error(saved["error"])
         else:
-            st.dataframe(saved["result"].rows, hide_index=True, width="stretch")
+            st.dataframe(display_safe(saved["result"].rows), hide_index=True, width="stretch")
             st.caption(f"{saved['result'].row_count} rows · {saved['result'].execution_ms:.0f} ms")
 
 
