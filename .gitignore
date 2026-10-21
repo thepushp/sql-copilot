@@ -10,6 +10,7 @@ env/
 
 # Secrets
 .env
+.streamlit/secrets.toml
 .env.example
 !.env.example
 

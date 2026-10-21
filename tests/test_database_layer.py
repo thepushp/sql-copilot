@@ -172,11 +172,15 @@ class TestPostgresIntegration:
         assert metadata.table_count > 0
         assert all(t.columns for s in metadata.schemas for t in s.tables)
 
-    def test_read_only_transaction_blocks_ddl(self):
+    def test_queries_run_in_a_read_only_transaction(self):
+        result = execute_query(self.name, "SELECT current_setting('transaction_read_only') AS ro")
+
+        assert result.rows["ro"][0] == "on"
+
+    def test_ddl_is_refused_even_if_the_guard_were_bypassed(self):
         result = execute_query(self.name, "CREATE TEMP TABLE sql_copilot_probe (id int)")
 
         assert result.error
-        assert "read-only" in result.error.lower()
 
     def test_simple_select(self):
         assert execute_query(self.name, "SELECT 1 AS one").rows["one"][0] == 1

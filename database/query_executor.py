@@ -1,3 +1,4 @@
+import logging
 import time
 
 import pandas as pd
@@ -12,6 +13,8 @@ from database.dialects import get_dialect
 
 from models.query_result import QueryResult
 
+
+logger = logging.getLogger("sql_copilot.executor")
 
 MAX_ROWS = 500
 
@@ -48,14 +51,16 @@ def execute_query(
                         )
                     )
 
-                except Exception:
+                except Exception as exc:
 
                     if required:
                         raise
 
-            result = connection.execute(
-                text(sql)
-            )
+                    logger.debug("Optional setup statement skipped: %s", exc)
+
+            result = connection.execution_options(
+                stream_results=True
+            ).execute(text(sql))
 
             rows = result.fetchmany(
                 MAX_ROWS

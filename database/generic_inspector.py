@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy import inspect
 from sqlalchemy.engine.reflection import ObjectKind
 
@@ -13,12 +15,16 @@ from database.schema_metadata import (
 )
 
 
+logger = logging.getLogger("sql_copilot.inspector")
+
+
 def _safe(function, *args, **kwargs):
     """Metadata a dialect cannot provide is simply left out."""
 
     try:
         return function(*args, **kwargs)
-    except (NotImplementedError, Exception):
+    except Exception as exc:
+        logger.debug("Metadata not available: %s: %s", function.__name__, exc)
         return {}
 
 

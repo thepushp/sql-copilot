@@ -1,0 +1,7 @@
+# Safe local defaults: listen on this machine only, send no usage statistics.
+# To share the app, put your own authentication/proxy in front of it.
+[server]
+address = "127.0.0.1"
+
+[browser]
+gatherUsageStats = false

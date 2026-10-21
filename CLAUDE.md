@@ -73,7 +73,8 @@ Empty placeholders (safe to delete): `config/settings.py`, `rag/vector_store.py`
 
 - Guard (`database/sql_guard.py`): walks the whole tree, blocks nested writes (`WITH x AS (DELETE ...)`), a function denylist (`pg_sleep`, `dblink`, `lo_*`, `pg_read_file`, ...), and, via `AccessPolicy`, excluded tables/columns and `SELECT *` on tables with hidden columns.
 - Privacy (`config/privacy.py`): users can exclude schemas/tables and hide columns by pattern (defaults: password, secret, token, ssn, api_key). Excluded objects are removed from the index and enforced in the guard. Sample values can be turned off. Sample values and summaries are sent to the LLM, so review these before using cloud providers.
-- Executor: runs the dialect's setup statements first (PostgreSQL/Oracle/MySQL read-only transaction, SQLite `query_only` on a read-only file, statement timeouts where supported). Still connect with a read-only DB role.
+- System objects: `validate_sql` rejects reads of system catalogs (`pg_*`, `information_schema`, `sqlite_*`, `dba_*`, `sys`, ...) unless `SQL_COPILOT_ALLOW_SYSTEM_CATALOGS` is set, and function prefixes such as `pg_advisory*`, `lo_*`, `xp_*`, `sp_*`, `dbms_*`. Both come from fields on `Dialect`.
+- Executor: results are streamed (`stream_results=True`) and only 500 rows are fetched, so a huge result does not load into memory. It runs the dialect's setup statements first (PostgreSQL/Oracle/MySQL read-only transaction, SQLite `query_only` on a read-only file, statement timeouts where supported). Still connect with a read-only DB role.
 - Learning loop: only user-approved SQL is stored (question + SQL, no data) in `data/approved_queries.json` (git-ignored; override with `EXAMPLES_PATH`).
 
 ## Remaining weaknesses
@@ -84,7 +85,17 @@ Empty placeholders (safe to delete): `config/settings.py`, `rag/vector_store.py`
 - `text(sql)` treats `:name` as a bind parameter.
 - Column-level privacy is name-based and best-effort (aliases and expressions can still surface values). Pair it with DB permissions.
 - No cost estimate (token counts only) and no `EXPLAIN` cost check before running queries.
-- No tests.
+- No answer-quality evaluation set: the tests cover code paths (96% line coverage), not how accurate the model's SQL is.
+- MySQL, SQL Server and Oracle are not tested against live servers. No database-side query timeout for Oracle and SQLite; SQL Server has no read-only transaction.
+- Glossary and approved examples are server-wide (`data/`), not per user; examples are matched by datasource name only.
+- Database engines are cached per credential and never disposed.
+
+## Logging, audit and packaging
+
+- `services/audit.py`: `configure_logging()` (idempotent, called at app start) sets up console logging under the `sql_copilot` logger and a rotating JSON-lines audit file (`data/audit.log`, override with `SQL_COPILOT_AUDIT_LOG`, `off` disables). `audit(event, **fields)` never raises, drops secret-named fields and None values, and truncates long text. Events: `index`, `answer` (outcome ok/blocked/rejected/error/no_sql/clarify, tokens, timing, tables), `example`, `approve`, `connection` (never passwords), `privacy`. Result rows are never logged. Previously silent `except` blocks now log warnings.
+- `tests/conftest.py` points the audit file at a temp path for every test (autouse); the shared `env` fixture (SQLite-only datasources, fake embeddings, isolated glossary/examples) lives there too.
+- Packaging: `README.md`, `LICENSE` (MIT), `requirements.lock` (exact tested versions, Python 3.14; regenerate with the command in its header), `requirements-dev.txt`, `Dockerfile` (lint-checked only, not yet built), `.github/workflows/ci.yml`, `.streamlit/config.toml` (binds 127.0.0.1, telemetry off).
+- Design stance: no built-in authentication (open-source, self-hosted tool). The README tells people to put their own proxy/VPN in front if they share it.
 
 ## Conventions
 

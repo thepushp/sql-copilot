@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 
 import sqlglot
@@ -82,6 +83,45 @@ def classify_sql(sql: str, dialect_key: str = "postgresql") -> str:
         return "DDL"
 
     return "OTHER"
+
+
+def _check_system_objects(tree, dialect):
+    """Reject direct reads of system catalogs unless explicitly allowed."""
+
+    if os.getenv("SQL_COPILOT_ALLOW_SYSTEM_CATALOGS"):
+        return None
+
+    system_schemas = {name.lower() for name in dialect.system_schemas}
+
+    cte_names = {
+        cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)
+    }
+
+    for table in tree.find_all(exp.Table):
+
+        name = table.name.lower()
+        schema = (table.db or "").lower()
+        catalog = (table.catalog or "").lower()
+
+        if not schema and not catalog and name in cte_names:
+            continue
+
+        if (
+            schema in system_schemas
+            or catalog in {c.lower() for c in dialect.system_catalogs}
+            or name.startswith(
+                tuple(p.lower() for p in dialect.system_table_prefixes)
+            )
+        ):
+
+            shown = ".".join(part for part in (catalog, schema, name) if part)
+
+            return (
+                f"{shown} is a system catalog. Use the Database Explorer "
+                "for schema information."
+            )
+
+    return None
 
 
 def _check_policy(tree, policy):
@@ -219,12 +259,22 @@ def validate_sql(
             else function.sql_name()
         ).lower()
 
-        if name.split(".")[-1] in dialect.forbidden_functions:
+        short_name = name.split(".")[-1]
+
+        if short_name in dialect.forbidden_functions or short_name.startswith(
+            dialect.forbidden_prefixes
+        ):
 
             return SQLValidation(
                 False,
                 f"Function {name}() is not allowed.",
             )
+
+    system_violation = _check_system_objects(tree, dialect)
+
+    if system_violation:
+
+        return SQLValidation(False, system_violation)
 
     if tree.find(exp.Into):
 

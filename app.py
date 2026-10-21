@@ -1,4 +1,5 @@
 import os
+import time
 from dataclasses import dataclass
 
 from sqlalchemy import text
@@ -32,6 +33,7 @@ from rag.retriever import (
 )
 from rag.schema_indexer import build_schema_index
 
+from services.audit import audit, configure_logging, get_logger
 from services.charting import chart_data
 from services.glossary import expand_query, load_glossary, save_glossary
 from services.table_selector import select_tables
@@ -70,6 +72,11 @@ SSL_MODES = ["default", "disable", "prefer", "require", "verify-full"]
 
 EXPLORER_TABLE_LIMIT = 50
 CUSTOM_MODEL = "Custom..."
+
+configure_logging()
+
+logger = get_logger("app")
+
 
 st.set_page_config(
     page_title="RAG DB Copilot",
@@ -214,6 +221,16 @@ def add_connection():
     st.session_state.conn_password = ""
     st.session_state.conn_name = ""
 
+    audit(
+        "connection",
+        action="added",
+        name=name,
+        dialect=config["driver"],
+        host=config.get("host"),
+        port=config.get("port"),
+        database=config.get("database"),
+    )
+
     st.session_state.conn_message = (
         "success",
         f"Added '{name}'. Click Discover & index database.",
@@ -223,6 +240,8 @@ def add_connection():
 def remove_connection(name):
 
     st.session_state.custom_datasources.pop(name, None)
+
+    audit("connection", action="removed", name=name)
 
     if st.session_state.indexed_datasource == name:
 
@@ -246,7 +265,24 @@ def test_connection(config, label):
 
     except Exception as exc:
 
+        audit(
+            "connection",
+            action="test",
+            ok=False,
+            dialect=config.get("driver"),
+            host=config.get("host"),
+            error=str(exc).splitlines()[0],
+        )
+
         return "error", f"Connection failed: {str(exc).splitlines()[0][:200]}"
+
+    audit(
+        "connection",
+        action="test",
+        ok=True,
+        dialect=config.get("driver"),
+        host=config.get("host"),
+    )
 
     return "success", "Connection works."
 
@@ -278,6 +314,8 @@ def refresh_example_questions():
 
     except Exception:
 
+        logger.warning("Could not prepare example questions", exc_info=True)
+
         st.session_state.example_questions = []
 
 
@@ -305,12 +343,24 @@ def run_example(example, settings):
 
         message["error"] = f"The query failed: {result.error}"
 
-        return message
+    else:
 
-    message["rows"] = result.rows
-    message["row_count"] = result.row_count
-    message["content"] = (
-        f"**{result.row_count} rows** in {result.execution_ms:.0f} ms"
+        message["rows"] = result.rows
+        message["row_count"] = result.row_count
+        message["content"] = (
+            f"**{result.row_count} rows** in {result.execution_ms:.0f} ms"
+        )
+
+    audit(
+        "example",
+        datasource=settings.datasource_name,
+        dialect=settings.dialect_key,
+        question=example.question,
+        sql=example.sql,
+        outcome="error" if result.error else "ok",
+        rows=result.row_count,
+        elapsed_ms=round(result.execution_ms),
+        error=result.error,
     )
 
     return message
@@ -336,6 +386,8 @@ def rebuild_index(embedding_model):
 
 def index_database(datasource_name, embedding_model, config=None):
 
+    started = time.perf_counter()
+
     with st.spinner("Discovering schemas and building index..."):
 
         try:
@@ -352,6 +404,15 @@ def index_database(datasource_name, embedding_model, config=None):
             st.session_state.indexed_datasource = None
             st.session_state.schema_index = None
 
+            logger.warning("Indexing %s failed: %s", datasource_name, exc)
+
+            audit(
+                "index",
+                datasource=datasource_name,
+                ok=False,
+                error=str(exc),
+            )
+
             st.error(f"Database discovery failed: {exc}")
 
             return
@@ -359,6 +420,20 @@ def index_database(datasource_name, embedding_model, config=None):
     st.session_state.messages = []
 
     refresh_example_questions()
+
+    metadata = st.session_state.database_metadata
+
+    audit(
+        "index",
+        datasource=datasource_name,
+        dialect=get_dialect(config or all_datasources().get(datasource_name)).key,
+        ok=True,
+        schemas=metadata.schema_count,
+        tables=metadata.table_count,
+        views=metadata.view_count,
+        examples=len(st.session_state.example_questions),
+        elapsed_ms=round((time.perf_counter() - started) * 1000),
+    )
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -706,6 +781,15 @@ def render_privacy(embedding_model):
 
         refresh_example_questions()
 
+        audit(
+            "privacy",
+            excluded_schemas=len(excluded_schemas),
+            excluded_tables=len(excluded_tables),
+            hidden_column_patterns=len(st.session_state.privacy.column_patterns),
+            include_sample_values=include_values,
+            hide_infrastructure=hide_infrastructure,
+        )
+
         st.toast("Privacy settings applied.")
 
         st.rerun()
@@ -886,6 +970,13 @@ def approve_message(index):
 
     message["approved"] = True
 
+    audit(
+        "approve",
+        datasource=message["datasource"],
+        question=message["question"],
+        sql=message["sql"],
+    )
+
 
 def render_result(rows):
 
@@ -1013,6 +1104,10 @@ def render_message(message, index):
                 f"{message['examples_used']} approved example(s) used"
             )
 
+        if message.get("elapsed_ms"):
+
+            details.append(f"{message['elapsed_ms'] / 1000:.1f} s")
+
         if message.get("input_tokens") or message.get("output_tokens"):
 
             details.append(
@@ -1039,7 +1134,7 @@ def _history_text(history):
     )
 
 
-def answer_question(question, history, settings, status):
+def _answer_question(question, history, settings, status):
 
     message = {
         "role": "assistant",
@@ -1120,6 +1215,11 @@ def answer_question(question, history, settings, status):
 
             except Exception:
 
+                logger.warning(
+                    "Table selection failed; using ranked tables",
+                    exc_info=True,
+                )
+
                 documents = None
 
             if documents is None:
@@ -1155,6 +1255,8 @@ def answer_question(question, history, settings, status):
             )
 
         except Exception:
+
+            logger.warning("Approved-example lookup failed", exc_info=True)
 
             found = []
 
@@ -1251,7 +1353,7 @@ def answer_question(question, history, settings, status):
 
             except Exception:
 
-                pass
+                logger.warning("Automatic repair failed", exc_info=True)
 
         if result.error:
 
@@ -1279,7 +1381,7 @@ def answer_question(question, history, settings, status):
 
             except Exception:
 
-                pass
+                logger.warning("Result summary failed", exc_info=True)
 
         return message
 
@@ -1298,9 +1400,60 @@ def answer_question(question, history, settings, status):
 
     except Exception as exc:
 
+        logger.warning("Answer failed: %s", exc, exc_info=True)
+
         message["error"] = str(exc)
 
         return message
+
+
+def _outcome(reply):
+
+    if reply.get("error"):
+
+        return "rejected" if "safety guard" in reply["error"] else "error"
+
+    if reply.get("clarify"):
+        return "clarify"
+
+    if reply.get("blocked"):
+        return "blocked"
+
+    if reply.get("rows") is not None:
+        return "ok"
+
+    return "no_sql"
+
+
+def answer_question(question, history, settings, status):
+    """Answer a question and record it in the audit trail."""
+
+    started = time.perf_counter()
+
+    reply = _answer_question(question, history, settings, status)
+
+    reply["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+
+    audit(
+        "answer",
+        datasource=settings.datasource_name,
+        dialect=settings.dialect_key,
+        provider=settings.provider,
+        model=settings.model,
+        question=question,
+        sql=reply.get("sql"),
+        outcome=_outcome(reply),
+        rows=reply.get("row_count"),
+        corrected=reply.get("corrected"),
+        tables=reply.get("tables"),
+        examples_used=reply.get("examples_used"),
+        input_tokens=reply.get("input_tokens"),
+        output_tokens=reply.get("output_tokens"),
+        elapsed_ms=reply["elapsed_ms"],
+        error=reply.get("error"),
+    )
+
+    return reply
 
 
 def render_chat(datasource_name, busy):

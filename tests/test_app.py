@@ -24,32 +24,6 @@ EMBEDDINGS = DeterministicFakeEmbedding(size=32)
 APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
 
 
-@pytest.fixture
-def env(monkeypatch, tmp_path, shop_db):
-    saved = dict(DATASOURCES)
-
-    DATASOURCES.clear()
-    DATASOURCES["Shop"] = {
-        "driver": "sqlite", "database": shop_db,
-        "host": "", "port": None, "username": "", "password": "",
-    }
-
-    monkeypatch.setattr(example_store, "STORE_PATH", tmp_path / "examples.json")
-    monkeypatch.setattr(glossary, "GLOSSARY_PATH", tmp_path / "glossary.txt")
-    monkeypatch.setattr("rag.embeddings.get_embeddings", lambda model_name=None: EMBEDDINGS)
-    monkeypatch.delenv("FLYWAY_MIGRATION_PATH", raising=False)
-
-    def no_network(*args, **kwargs):
-        raise ConnectionError("network disabled in tests")
-
-    monkeypatch.setattr("services.model_catalog.list_models", no_network)
-
-    yield tmp_path
-
-    DATASOURCES.clear()
-    DATASOURCES.update(saved)
-
-
 class Harness:
 
     def __init__(self, monkeypatch, *sql_answers, tables=("main.customer", "main.orders"), summary="Summary text."):

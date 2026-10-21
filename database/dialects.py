@@ -22,6 +22,9 @@ class Dialect:
     read_only_warning: str = ""
     supports_ssl_mode: bool = False
     connect_args: dict = field(default_factory=dict)
+    forbidden_prefixes: tuple = ()
+    system_table_prefixes: tuple = ()
+    system_catalogs: frozenset = frozenset()
 
 
 DIALECTS = {
@@ -55,6 +58,12 @@ DIALECTS = {
                 "lo_export",
                 "lo_unlink",
                 "query_to_xml",
+                "pg_notify",
+                "pg_reload_conf",
+                "pg_rotate_logfile",
+                "pg_switch_wal",
+                "pg_create_restore_point",
+                "pg_logical_emit_message",
             }
         ),
         limit_hint="add LIMIT 50",
@@ -64,6 +73,13 @@ DIALECTS = {
         ),
         supports_ssl_mode=True,
         connect_args={"connect_timeout": 10},
+        forbidden_prefixes=(
+            "pg_advisory",
+            "pg_try_advisory",
+            "pg_stat_reset",
+            "lo_",
+        ),
+        system_table_prefixes=("pg_",),
     ),
     "mysql": Dialect(
         key="mysql",
@@ -87,6 +103,8 @@ DIALECTS = {
                 "load_file",
                 "get_lock",
                 "release_lock",
+                "release_all_locks",
+                "master_pos_wait",
                 "sys_exec",
                 "sys_eval",
             }
@@ -147,6 +165,8 @@ DIALECTS = {
             "that only has SELECT permission."
         ),
         connect_args={"login_timeout": 10},
+        forbidden_prefixes=("xp_", "sp_"),
+        system_catalogs=frozenset({"master", "msdb", "tempdb", "model"}),
     ),
     "sqlite": Dialect(
         key="sqlite",
@@ -166,6 +186,7 @@ DIALECTS = {
             "There are no schemas: refer to tables by plain name. Date "
             "arithmetic example: date('now', '-7 day')."
         ),
+        system_table_prefixes=("sqlite_",),
     ),
     "oracle": Dialect(
         key="oracle",
@@ -205,6 +226,8 @@ DIALECTS = {
             "with a semicolon. Date arithmetic example: SYSDATE - 7."
         ),
         connect_args={"tcp_connect_timeout": 10},
+        forbidden_prefixes=("dbms_", "utl_"),
+        system_table_prefixes=("dba_", "v$", "gv$"),
     ),
 }
 

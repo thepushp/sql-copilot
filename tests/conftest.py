@@ -3,6 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from config.datasource_config import DATASOURCES
+from services import example_store, glossary
+
 from langchain_community.embeddings import DeterministicFakeEmbedding
 
 from database.schema_metadata import (
@@ -161,3 +164,51 @@ class ScriptedLLM:
 @pytest.fixture
 def scripted_llm():
     return ScriptedLLM
+
+
+@pytest.fixture(autouse=True)
+def audit_log(tmp_path, monkeypatch):
+    """Every test writes its audit trail to its own temp file."""
+
+    from services import audit
+
+    path = tmp_path / "audit.log"
+
+    monkeypatch.setenv("SQL_COPILOT_AUDIT_LOG", str(path))
+    monkeypatch.delenv("SQL_COPILOT_ALLOW_SYSTEM_CATALOGS", raising=False)
+    audit.configure_logging(force=True)
+
+    yield path
+
+    audit.configure_logging(force=True)
+
+
+APP_EMBEDDINGS = DeterministicFakeEmbedding(size=32)
+
+
+@pytest.fixture
+def env(monkeypatch, tmp_path, shop_db):
+    saved = dict(DATASOURCES)
+
+    DATASOURCES.clear()
+    DATASOURCES["Shop"] = {
+        "driver": "sqlite", "database": shop_db,
+        "host": "", "port": None, "username": "", "password": "",
+    }
+
+    monkeypatch.setattr(example_store, "STORE_PATH", tmp_path / "examples.json")
+    monkeypatch.setattr(glossary, "GLOSSARY_PATH", tmp_path / "glossary.txt")
+    monkeypatch.setattr("rag.embeddings.get_embeddings", lambda model_name=None: APP_EMBEDDINGS)
+    monkeypatch.delenv("FLYWAY_MIGRATION_PATH", raising=False)
+
+    def no_network(*args, **kwargs):
+        raise ConnectionError("network disabled in tests")
+
+    monkeypatch.setattr("services.model_catalog.list_models", no_network)
+
+    yield tmp_path
+
+    DATASOURCES.clear()
+    DATASOURCES.update(saved)
+
+
