@@ -33,7 +33,8 @@ No tests, linter, or build step exist. Only PostgreSQL is supported (`postgresql
    - `process_question()` (`services/query_service.py`) calls the LLM with chat history. Output may be SQL, `CLARIFY: <question>` (shown as a chat question, `NeedsClarification`) or `CANNOT_GENERATE_SQL` (`NoSQLGenerated`).
    - Non-READ SQL is shown but never executed. READ goes through `validate_sql(sql, policy)`, `execute_query()`, and one automatic repair attempt on error (`repair_question`).
    - Optional result summary (`summarize_result`, off by default because it sends the first 20 rows to the model).
-5. `render_message()` shows the answer: summary, table/chart tabs (`services/charting.py`), SQL expander, CSV download, "Correct" button (saves the example to `data/approved_queries.json`), token usage and tables considered.
+5. ER Diagram tab (`services/er_diagram.py`): builds Graphviz DOT (rendered by `st.graphviz_chart`, no system install) and Mermaid `erDiagram` export from the filtered metadata. Modes: around a table (BFS by relationship depth), whole schema (best-connected first, capped at 40 tables), or the tables used by the last answer. Inferred relationships are dashed.
+6. `render_message()` shows the answer: summary, table/chart tabs (`services/charting.py`), SQL expander, CSV download, "Correct" button (saves the example to `data/approved_queries.json`), token usage and tables considered.
 
 ## Layout
 
@@ -42,7 +43,7 @@ No tests, linter, or build step exist. Only PostgreSQL is supported (`postgresql
 - `database/`: connection pool, inspector, metadata dataclasses, SQL guard, executor.
 - `flyway/`: migration parsing and object lifecycle state.
 - `rag/`: embeddings (configurable), FAISS index, hybrid retriever, context builder. `vector_store.py` is empty.
-- `services/`: `llm_service.py` (provider factory), `model_catalog.py` (live model lists), `query_service.py`, `table_selector.py`, `glossary.py`, `example_store.py`, `charting.py`.
+- `services/`: `er_diagram.py`, `llm_service.py` (provider factory), `model_catalog.py` (live model lists), `query_service.py`, `table_selector.py`, `glossary.py`, `example_store.py`, `charting.py`.
 - `prompts/sql_prompt.py`: SQL system prompt and result-summary prompt.
 - `models/query_result.py`: `QueryResult` dataclass. `models/datasource.py` is empty.
 

@@ -31,6 +31,16 @@ from rag.schema_indexer import build_schema_index
 from services.charting import chart_data
 from services.glossary import expand_query, load_glossary, save_glossary
 from services.table_selector import select_tables
+from services.er_diagram import (
+    COLUMN_MODES,
+    MAX_TABLES,
+    build_dot,
+    build_mermaid,
+    expand_around,
+    most_connected,
+    schema_tables,
+    table_index,
+)
 from services.example_store import (
     add_example,
     find_similar,
@@ -986,11 +996,13 @@ def render_explorer():
     schema_name = st.selectbox(
         "Schema",
         [schema.name for schema in metadata.schemas],
+        key="explorer_schema",
     )
 
     search = st.text_input(
         "Filter tables",
         placeholder="e.g. student",
+        key="explorer_filter",
     ).strip().lower()
 
     schema = next(
@@ -1058,6 +1070,169 @@ def render_explorer():
         )
 
 
+def _last_answer_tables():
+
+    for message in reversed(st.session_state.messages):
+
+        if message["role"] == "assistant" and message.get("tables"):
+
+            return message["tables"]
+
+    return []
+
+
+def render_er_diagram():
+
+    metadata = st.session_state.database_metadata
+
+    if not metadata:
+
+        st.info("Index the database to draw its relationships.")
+
+        return
+
+    index = table_index(metadata)
+
+    left, right = st.columns([2, 3])
+
+    with left:
+
+        mode = st.radio(
+            "Show",
+            ["Around a table", "Whole schema", "Tables from last answer"],
+            key="er_mode",
+        )
+
+    with right:
+
+        detail = st.radio(
+            "Columns",
+            COLUMN_MODES,
+            horizontal=True,
+            key="er_columns",
+        )
+
+        include_inferred = st.checkbox(
+            "Include inferred relationships (dashed)",
+            value=True,
+            key="er_inferred",
+            help=(
+                "Relationships guessed from <name>_id columns, as opposed "
+                "to real foreign keys."
+            ),
+        )
+
+    keys = []
+
+    if mode == "Around a table":
+
+        options = sorted(index)
+
+        start = st.selectbox(
+            "Table",
+            options,
+            index=options.index(most_connected(index, include_inferred)),
+            key="er_table",
+        )
+
+        hops = st.slider("Relationship depth", 1, 3, 1, key="er_depth")
+
+        keys = expand_around(index, start, hops, include_inferred)
+
+    elif mode == "Whole schema":
+
+        schema_names = [schema.name for schema in metadata.schemas]
+
+        schema = st.selectbox(
+            "Schema",
+            schema_names,
+            index=schema_names.index(
+                max(
+                    schema_names,
+                    key=lambda name: len(
+                        schema_tables(index, name, include_inferred)
+                    ),
+                )
+            ),
+            key="er_schema",
+        )
+
+        hide_isolated = st.checkbox(
+            "Hide tables without relationships",
+            value=True,
+            key="er_hide_isolated",
+        )
+
+        keys = schema_tables(
+            index,
+            schema,
+            include_inferred,
+            hide_isolated,
+        )
+
+    else:
+
+        keys = [key for key in _last_answer_tables() if key in index]
+
+        if not keys:
+
+            st.info("Ask a question first; its tables will appear here.")
+
+            return
+
+    if not keys:
+
+        st.info(
+            "No tables to show. This schema has no relationships; "
+            "untick \"Hide tables without relationships\" to list its tables."
+            if mode == "Whole schema"
+            else "No tables to show for this selection."
+        )
+
+        return
+
+    if len(keys) > MAX_TABLES:
+
+        st.warning(
+            f"{len(keys)} tables match; showing the first {MAX_TABLES}. "
+            "Reduce the depth or pick a smaller scope."
+        )
+
+        keys = keys[:MAX_TABLES]
+
+    st.caption(f"{len(keys)} tables")
+
+    dot = build_dot(index, keys, detail, include_inferred)
+
+    st.graphviz_chart(dot, width="stretch")
+
+    with st.expander("Export"):
+
+        mermaid = build_mermaid(index, keys, detail, include_inferred)
+
+        st.code(mermaid, language="text")
+
+        first, second = st.columns(2)
+
+        with first:
+
+            st.download_button(
+                "⬇ Mermaid (.mmd)",
+                mermaid,
+                file_name="er_diagram.mmd",
+                key="download_mermaid",
+            )
+
+        with second:
+
+            st.download_button(
+                "⬇ Graphviz (.dot)",
+                dot,
+                file_name="er_diagram.dot",
+                key="download_dot",
+            )
+
+
 def main():
 
     init_state()
@@ -1068,8 +1243,8 @@ def main():
 
     st.title("🗄️ RAG Database Copilot")
 
-    tab_chat, tab_explorer = st.tabs(
-        ["💬 Chat", "🌳 Database Explorer"]
+    tab_chat, tab_explorer, tab_er = st.tabs(
+        ["💬 Chat", "🌳 Database Explorer", "🔗 ER Diagram"]
     )
 
     indexed = is_indexed(datasource_name)
@@ -1090,6 +1265,10 @@ def main():
     with tab_explorer:
 
         render_explorer()
+
+    with tab_er:
+
+        render_er_diagram()
 
     with tab_chat:
 
