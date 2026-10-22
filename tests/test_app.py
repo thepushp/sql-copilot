@@ -288,6 +288,15 @@ class TestAnswering:
         assert "safety guard" in reply["error"]
         assert reply.get("rows") is None
 
+    def test_relationship_question_answers_without_model_and_links_to_er(self, harness):
+        ui = harness("CANNOT_GENERATE_SQL").index()
+
+        reply = ui.ask("how is orders connected to other tables")
+
+        assert "does not contain enough" not in reply["content"]
+        assert reply["er_tables"]
+        assert reply["input_tokens"] == 0
+
     def test_no_sql_answer_is_explained(self, harness):
         ui = harness("CANNOT_GENERATE_SQL").index()
 

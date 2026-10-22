@@ -50,7 +50,7 @@ from ui.common import (
     current_theme as _theme,
     show_html,
 )
-from ui.explorer import render_explorer
+from ui.explorer import open_in_er_diagram, render_explorer
 from services.er_diagram import (
     COLUMN_MODES,
     DEFAULT_COLUMN_MODE,
@@ -67,6 +67,8 @@ from services.example_questions import (
     verify_examples,
 )
 from services.followups import suggest_followups
+from services.relationship_answer import related_tables
+from services.schema_answer import answer_schema_question
 from services.query_checks import (
     estimate_plan,
     find_stored_values,
@@ -1212,6 +1214,18 @@ def render_result(rows):
             st.bar_chart(frame)
 
 
+def open_er_from_chat(key):
+
+    if key:
+
+        open_in_er_diagram(key)
+
+    else:
+
+        st.session_state["er_mode"] = "Whole schema"
+        st.session_state["nav"] = NAV_ER
+
+
 def render_message(message, index, followups=False):
 
     with st.chat_message(message["role"]):
@@ -1233,6 +1247,20 @@ def render_message(message, index, followups=False):
         elif message.get("content"):
 
             st.markdown(message["content"])
+
+        if message.get("er_tables") is not None:
+
+            with st.container(horizontal=True):
+
+                for key in message["er_tables"] or [None]:
+
+                    st.button(
+                        f"Open {key} in the ER diagram" if key else "Open the ER diagram",
+                        icon=":material/schema:",
+                        key=f"er_{index}_{key}",
+                        on_click=open_er_from_chat,
+                        args=(key,),
+                    )
 
         if message.get("summary"):
 
@@ -1422,6 +1450,25 @@ def _answer_question(question, history, settings, status):
     policy = st.session_state.access_policy
 
     try:
+
+        relationships = answer_schema_question(
+            question,
+            st.session_state.database_metadata,
+        )
+
+        if relationships:
+
+            message["content"] = relationships
+
+            tables = related_tables(
+                question,
+                st.session_state.database_metadata,
+            )
+
+            if tables is not None:
+                message["er_tables"] = tables[:3]
+
+            return message
 
         glossary = load_glossary()
 
