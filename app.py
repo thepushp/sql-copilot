@@ -28,6 +28,7 @@ from rag.embeddings import (
 )
 from rag.retriever import (
     add_related_tables,
+    documents_for_keys,
     retrieve_candidates,
     retrieve_documents,
 )
@@ -74,6 +75,7 @@ from services.query_checks import (
     review,
 )
 from services.sql_explain import describe_sql
+from services.sql_qualify import finalize_sql, format_sql, tables_in_sql
 from services.example_store import (
     add_example,
     find_similar,
@@ -382,7 +384,7 @@ def run_example(example, settings):
         "role": "assistant",
         "question": example.question,
         "datasource": settings.datasource_name,
-        "sql": example.sql,
+        "sql": format_sql(example.sql, settings.dialect_key),
         "tables": example.tables,
         "example": True,
         "dialect": settings.dialect_key,
@@ -1494,6 +1496,33 @@ def _answer_question(question, history, settings, status):
 
             documents = retrieve_documents(index, search_query, profile)
 
+        metadata = st.session_state.database_metadata
+
+        previous_sql = next(
+            (
+                item["sql"]
+                for item in reversed(st.session_state.messages)
+                if item["role"] == "assistant" and item.get("sql")
+            ),
+            "",
+        )
+
+        if history and previous_sql:
+
+            present = {
+                document.metadata.get("key")
+                for document in documents
+            }
+
+            documents = [
+                document
+                for document in documents_for_keys(
+                    index,
+                    tables_in_sql(previous_sql, metadata, settings.dialect_key),
+                )
+                if document.metadata.get("key") not in present
+            ] + documents
+
         context = build_context(documents, profile)
 
         message["tables"] = [
@@ -1532,9 +1561,12 @@ def _answer_question(question, history, settings, status):
             examples=examples,
             glossary=glossary,
             dialect_key=settings.dialect_key,
+            previous_sql=previous_sql if history else "",
         )
 
         add_usage(response)
+
+        response.sql = finalize_sql(response.sql, metadata, settings.dialect_key)
 
         message["sql"] = response.sql
 
@@ -1592,6 +1624,8 @@ def _answer_question(question, history, settings, status):
                 )
 
                 add_usage(repaired)
+
+                repaired.sql = finalize_sql(repaired.sql, metadata, settings.dialect_key)
 
                 if validate_sql(
                     repaired.sql,
@@ -1675,6 +1709,8 @@ def _answer_question(question, history, settings, status):
                     )
 
                     add_usage(refined)
+
+                    refined.sql = finalize_sql(refined.sql, metadata, settings.dialect_key)
 
                     if validate_sql(
                         refined.sql,

@@ -212,7 +212,7 @@ class TestAppWritesTheAuditTrail:
         [record] = [e for e in events(audit_log) if e["event"] == "answer"]
 
         assert record["question"] == "list customers"
-        assert record["sql"] == "SELECT name FROM customer ORDER BY id"
+        assert " ".join(record["sql"].split()) == "SELECT name FROM customer ORDER BY id"
         assert record["outcome"] == "ok"
         assert record["rows"] == 2
         assert record["input_tokens"] > 0

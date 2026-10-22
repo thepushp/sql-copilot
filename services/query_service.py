@@ -105,11 +105,28 @@ def clean_sql(raw: str) -> str:
     return text.strip().rstrip(";").strip()
 
 
+FOLLOW_UP_NOTE = (
+    "PREVIOUS QUERY from this conversation. If the request above refines "
+    "it (a filter, column, sort, grouping or limit change), edit this query "
+    "and keep everything else; if it is a new topic, ignore it:\n"
+)
+
+
 def _generate(
-    llm, question, context, history, examples, glossary="", dialect_key="postgresql"
+    llm,
+    question,
+    context,
+    history,
+    examples,
+    glossary="",
+    dialect_key="postgresql",
+    previous_sql="",
 ) -> QueryResponse:
 
     dialect = get_dialect(dialect_key)
+
+    if previous_sql:
+        question = f"{question}\n\n{FOLLOW_UP_NOTE}{previous_sql}"
 
     messages = SQL_PROMPT.invoke(
         {
@@ -159,10 +176,12 @@ def process_question(
     examples: str = "",
     glossary: str = "",
     dialect_key: str = "postgresql",
+    previous_sql: str = "",
 ) -> QueryResponse:
 
     return _generate(
-        llm, question, context, history, examples, glossary, dialect_key
+        llm, question, context, history, examples, glossary, dialect_key,
+        previous_sql,
     )
 
 

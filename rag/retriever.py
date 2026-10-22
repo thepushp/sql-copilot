@@ -134,6 +134,13 @@ def retrieve_candidates(vector_store, question, limit=20, fetch_k=60):
     return [all_documents[key] for key in ordered[:limit]]
 
 
+def documents_for_keys(vector_store, keys):
+
+    all_documents = _all_documents(vector_store)
+
+    return [all_documents[key] for key in keys if key in all_documents]
+
+
 def add_related_tables(vector_store, documents, max_neighbors):
 
     all_documents = _all_documents(vector_store)

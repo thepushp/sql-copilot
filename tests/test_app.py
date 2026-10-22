@@ -25,6 +25,10 @@ ER = ":material/schema: ER diagram"
 
 EMBEDDINGS = DeterministicFakeEmbedding(size=32)
 
+def flat(sql):
+    return " ".join(sql.split())
+
+
 APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
 
 
@@ -162,7 +166,7 @@ class TestStartupAndIndexing:
 
         ui.ask("and for customers?")
 
-        assert 'SELECT COUNT(*) AS total FROM "orders"' in ui.llm.calls[-1]
+        assert 'SELECT COUNT(*) AS total FROM "orders"' in flat(ui.llm.calls[-1])
 
     def test_examples_disappear_once_chatting(self, harness):
         ui = harness("SELECT 1").index()
@@ -227,7 +231,7 @@ class TestAnswering:
 
         assert reply["rows"]["name"].tolist() == ["Ann", "Bob"]
         assert reply["content"].startswith("**2 rows**")
-        assert reply["sql"] == "SELECT name FROM customer ORDER BY id"
+        assert flat(reply["sql"]) == "SELECT name FROM customer ORDER BY id"
         assert "main.customer" in reply["tables"]
         assert reply["input_tokens"] > 0 and reply["output_tokens"] > 0
         assert reply["question"] == "list customers"
@@ -298,9 +302,9 @@ class TestAnswering:
         reply = ui.ask("list customers")
 
         assert reply["corrected"] is True
-        assert reply["sql"] == "SELECT name FROM customer"
+        assert flat(reply["sql"]) == "SELECT name FROM customer"
         assert reply["rows"].shape[0] == 2
-        assert "SELECT nope FROM customer" in ui.llm.calls[-1]
+        assert "SELECT nope FROM customer" in flat(ui.llm.calls[-1])
         assert len(ui.llm.calls) == 3
 
     def test_unrepairable_query_reports_the_error(self, harness):
@@ -364,7 +368,7 @@ class TestConversation:
         ui.ask("list customers")
         ui.ask("sort them")
 
-        assert "SELECT name FROM customer" in ui.llm.calls[-1]
+        assert "SELECT name FROM customer" in flat(ui.llm.calls[-1])
 
     def test_clear_chat(self, harness):
         ui = harness("SELECT 1").index()
@@ -392,6 +396,8 @@ class TestLearning:
         ui.button(sidebar=False, label="Correct").click().run()
 
         saved = json.loads((env / "examples.json").read_text())
+        assert len(saved) == 1 and flat(saved[0]["sql"]) == "SELECT name FROM customer"
+        saved[0]["sql"] = "SELECT name FROM customer"
         assert saved == [{
             "datasource": "Shop", "question": "list customers", "sql": "SELECT name FROM customer",
         }]
@@ -950,7 +956,7 @@ class TestSmarterAnswers:
         next(b for b in ui.at.button if b.key == "run_edit_1").click().run()
 
         assert ui.messages[1]["edit_error"]
-        assert ui.messages[1]["sql"] == "SELECT name FROM customer ORDER BY id"
+        assert flat(ui.messages[1]["sql"]) == "SELECT name FROM customer ORDER BY id"
 
     def test_follow_up_chip_asks_the_question(self, harness):
         ui = harness(
@@ -965,3 +971,48 @@ class TestSmarterAnswers:
 
         assert ui.messages[-2]["role"] == "user"
         assert ui.messages[-2]["content"] == chips[0].label
+
+
+class TestFollowUps:
+
+    def test_follow_up_keeps_the_tables_of_the_previous_query(self, harness):
+        ui = harness(
+            "SELECT id, total FROM orders ORDER BY id",
+            "SELECT id, total FROM orders WHERE total > 100",
+            tables=("main.customer",),
+        ).index()
+        ui.ask("orders")
+
+        ui.ask("only the big ones")
+
+        assert "Table: orders" in ui.llm.calls[-1]
+        assert "main.orders" in ui.reply["tables"]
+
+    def test_first_question_does_not_pull_in_extra_tables(self, harness):
+        ui = harness("SELECT name FROM customer", tables=("main.customer",)).index()
+
+        ui.ask("customers")
+
+        assert "main.product" not in ui.reply["tables"]
+
+
+class TestFormattingAndFollowUpPrompt:
+
+    def test_generated_sql_is_formatted(self, harness):
+        ui = harness("select name,status from customer where id=1 order by name").index()
+
+        reply = ui.ask("customer one")
+
+        assert reply["sql"].count("\n") >= 3
+        assert reply["sql"].startswith("SELECT")
+
+    def test_follow_up_prompt_contains_the_previous_query(self, harness):
+        ui = harness("SELECT id, total FROM orders", "SELECT id, total FROM orders WHERE total > 100").index()
+        ui.ask("orders")
+        first_prompt = ui.llm.calls[-1]
+
+        ui.ask("only the big ones")
+
+        assert "PREVIOUS QUERY" not in first_prompt
+        assert "PREVIOUS QUERY" in ui.llm.calls[-1]
+        assert "orders" in ui.llm.calls[-1].split("PREVIOUS QUERY")[1]
