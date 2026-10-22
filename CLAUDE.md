@@ -82,6 +82,15 @@ Tested against live servers: PostgreSQL and SQLite only. MySQL, SQL Server and O
 
 Ollama, OpenAI, Anthropic, Google, and "OpenAI-compatible" (any base URL). API key and base URL can be entered in the sidebar (kept in session only) or come from env (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_COMPATIBLE_API_KEY`, `OLLAMA_BASE_URL`). The model list is fetched live per provider (`model_catalog.py`) with the static list as fallback and a "Custom..." option. Embedding model: `EMBEDDING_MODEL` env or the Advanced expander (re-index after changing).
 
+## Answer quality (checks, plan, evaluation)
+
+- `services/query_checks.py`: `review(sql, rows, dialect, metadata)` returns `Issue`s: cartesian join, SUM/AVG of a parent column joined to its child (fan-out), all-NULL columns, and, for empty results, string filters that match nothing (separator/case-insensitive match against known values; text columns with no known values are flagged too). `find_stored_values` then runs one small DISTINCT ... LIKE read per issue (through the guard with the privacy policy) so the retry sees how the value is really stored (`trf manage` vs `trf.manage`). `estimate_plan` runs `EXPLAIN` (PostgreSQL, MySQL) without executing and warns on big index-less scans. All of it warns; only the guard blocks.
+- `app.py` `_answer_question`: an empty result with fixable issues triggers one `refine_question` retry; the retry replaces the answer only if it returns rows. `annotate()` fills `plan`, `warnings`, `estimate` on the message.
+- `services/sql_explain.py` (`describe_sql`): one-line plain-English plan from the parsed SQL (no model call). `services/followups.py`: rule-based follow-up chips for the last answer.
+- Answers show an editable SQL box; `run_edited_sql` re-runs it through `classify_sql` + `validate_sql` + the executor (audit event `edit`).
+- `infer_shared_key_relationships` links tables that carry the same unique identifier column (`sub`, or `<prefix>_sub`) with the same type; marked inferred.
+- Evaluation: `python -m evals.run --datasource NAME --cases evals/cases.example.json --provider P --model M` scores execution accuracy (`services/evaluation.py`; compares result sets, ignoring column names/order and row order unless `ordered`). Write your own cases file against your schema.
+
 ## Dead code
 
 Empty placeholders (safe to delete): `config/settings.py`, `rag/vector_store.py`, `models/datasource.py`.

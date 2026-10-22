@@ -11,7 +11,7 @@ from database.schema_metadata import (
     ForeignKeyMetadata,
     IndexMetadata,
     SchemaMetadata,
-    TableMetadata, infer_relationships,
+    TableMetadata, infer_relationships, infer_shared_key_relationships,
 )
 from flyway.flyway_inspector import build_flyway_object_state, inspect_flyway_directory
 
@@ -488,6 +488,7 @@ def inspect_database(
         )
 
     infer_relationships(database_metadata)
+    infer_shared_key_relationships(database_metadata)
 
     return database_metadata
 

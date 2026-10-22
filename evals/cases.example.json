@@ -1,0 +1,23 @@
+[
+  {
+    "id": "inactive-customers",
+    "question": "Which customers are inactive?",
+    "sql": "SELECT name FROM customer WHERE status = 'INACTIVE'"
+  },
+  {
+    "id": "orders-per-customer",
+    "question": "How many orders has each customer placed?",
+    "sql": "SELECT c.name, COUNT(o.id) FROM customer c LEFT JOIN orders o ON o.customer_id = c.id GROUP BY c.name"
+  },
+  {
+    "id": "biggest-order",
+    "question": "What is the largest order total?",
+    "sql": "SELECT MAX(total) FROM orders"
+  },
+  {
+    "id": "top-orders",
+    "question": "List the two biggest orders, largest first",
+    "sql": "SELECT id, total FROM orders ORDER BY total DESC LIMIT 2",
+    "ordered": true
+  }
+]

@@ -25,6 +25,33 @@ VALUES AND DESCRIPTIONS
   (e.g. "cancelled trips" -> status = 'CANCELLED'), including its case.
 - Use description fields to understand what a table or column means.
 
+MATCHING TEXT VALUES
+- If the exact stored value is not listed in the context, do not guess its
+  spelling. Names and codes are often stored with different separators or
+  case than the user types (e.g. "report view" vs "report.view" or
+  "REPORT_VIEW"). Match with a case-insensitive LIKE/ILIKE and wildcards in
+  place of spaces and separators (e.g. ILIKE '%report%view%').
+- Prefer LIKE over = for free-text user input such as names and labels.
+
+PEOPLE AND NAMES
+- When the user names a person, search every name-like column of the person
+  or account table (first name, last name, full name, display name, email,
+  username), and match each word of the name separately with case-insensitive
+  LIKE, so "john smith" can match first_name and last_name.
+- If the person or account table lacks the name, look for it on a related
+  table through the listed relationships.
+
+DATA IN OTHER TABLES
+- When the user asks for an attribute (a token, address, device, role,
+  permission, ...) of some entity and the entity table does not have it,
+  look through ALL tables in the context for a column with that meaning and
+  join it to the entity.
+- Link tables through the listed relationships. If none is listed, join
+  columns that carry the same identifier (e.g. the same column name, or a
+  column named like <something>_<identifier>) and are of the same type.
+- Return the requested attribute next to who it belongs to; use LEFT JOIN
+  when some entities may not have it.
+
 TABLE CHOICE
 - Prefer base entity tables over derived ones (aggregated, result, log,
   history, template, export, compiled) unless the question is about them.

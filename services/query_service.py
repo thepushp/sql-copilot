@@ -166,6 +166,28 @@ def process_question(
     )
 
 
+def _retry(
+    llm,
+    question,
+    context,
+    history,
+    failed_sql,
+    feedback,
+    examples,
+    glossary,
+    dialect_key,
+) -> QueryResponse:
+
+    turns = list(history or [])
+
+    turns.append(("human", question))
+    turns.append(("ai", failed_sql))
+
+    return _generate(
+        llm, feedback, context, turns, examples, glossary, dialect_key
+    )
+
+
 def repair_question(
     llm,
     question: str,
@@ -178,11 +200,6 @@ def repair_question(
     dialect_key: str = "postgresql",
 ) -> QueryResponse:
 
-    turns = list(history or [])
-
-    turns.append(("human", question))
-    turns.append(("ai", failed_sql))
-
     feedback = (
         f"That SQL failed with this {get_dialect(dialect_key).label} error:\n"
         f"{error}\n\n"
@@ -190,8 +207,38 @@ def repair_question(
         "identifiers from the database context."
     )
 
-    return _generate(
-        llm, feedback, context, turns, examples, glossary, dialect_key
+    return _retry(
+        llm, question, context, history, failed_sql, feedback,
+        examples, glossary, dialect_key,
+    )
+
+
+def refine_question(
+    llm,
+    question: str,
+    context: str,
+    history,
+    sql: str,
+    problems: list[str],
+    examples: str = "",
+    glossary: str = "",
+    dialect_key: str = "postgresql",
+) -> QueryResponse:
+    """Ask for a better query when one ran but returned no rows."""
+
+    feedback = (
+        "That SQL ran but returned no rows. Likely problems:\n"
+        + "\n".join(f"- {problem}" for problem in problems)
+        + "\n\nReturn a corrected single statement. Use the exact stored "
+        "spelling of values when they are listed above; otherwise match "
+        "with LIKE/ILIKE and wildcards. If the value is a person's name, "
+        "look for separate first/last name columns (or a name column on a "
+        "related table) and match each word separately."
+    )
+
+    return _retry(
+        llm, question, context, history, sql, feedback,
+        examples, glossary, dialect_key,
     )
 
 

@@ -482,3 +482,88 @@ def infer_relationships(
                     inferred=True,
                 )
             )
+
+GENERIC_KEY_NAMES = frozenset(
+    {
+        "id", "name", "type", "code", "status", "key", "value", "label",
+        "title", "description", "created_at", "updated_at", "version",
+    }
+)
+
+
+def infer_shared_key_relationships(
+    database_metadata: DatabaseMetadata,
+) -> None:
+    """Link tables that carry the same identifier column.
+
+    If one table has a single-column primary key or unique index (such as
+    `sub`), other tables in the same schema with a column of that name, or
+    `<prefix>_<name>`, and the same type, point to it. Marked inferred.
+    """
+
+    for schema in database_metadata.schemas:
+
+        active = [table for table in schema.tables if table.flyway_active]
+
+        for parent in active:
+
+            unique = {
+                index.columns[0].lower()
+                for index in parent.indexes
+                if index.unique and len(index.columns) == 1 and index.columns[0]
+            }
+
+            unique |= {
+                column.name.lower()
+                for column in parent.columns
+                if column.primary_key
+            }
+
+            for key in unique:
+
+                if key in GENERIC_KEY_NAMES or len(key) < 3:
+                    continue
+
+                parent_column = next(
+                    (
+                        column
+                        for column in parent.columns
+                        if column.name.lower() == key
+                    ),
+                    None,
+                )
+
+                if parent_column is None:
+                    continue
+
+                for child in active:
+
+                    if child is parent or child.kind != "table":
+                        continue
+
+                    for column in child.columns:
+
+                        name = column.name.lower()
+
+                        if name != key and not name.endswith("_" + key):
+                            continue
+
+                        if column.data_type != parent_column.data_type:
+                            continue
+
+                        if any(
+                            fk.column.lower() == name
+                            and fk.foreign_table.lower() == parent.name.lower()
+                            for fk in child.foreign_keys
+                        ):
+                            continue
+
+                        child.foreign_keys.append(
+                            ForeignKeyMetadata(
+                                column=column.name,
+                                foreign_schema=parent.schema,
+                                foreign_table=parent.name,
+                                foreign_column=parent_column.name,
+                                inferred=True,
+                            )
+                        )

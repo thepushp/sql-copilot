@@ -868,3 +868,100 @@ class TestErDiagram:
         assert len(data["tables"]) == 40
         assert data["summary"].startswith("showing 40 of 46 tables")
         assert not ui.at.warning, "truncation is reported in the viewer bar, not as a banner"
+
+
+class TestSmarterAnswers:
+
+    def test_empty_result_is_retried_with_the_stored_spelling(self, harness):
+        ui = harness(
+            "SELECT name FROM customer WHERE status = 'in active'",
+            "SELECT name FROM customer WHERE status = 'INACTIVE'",
+        ).index()
+
+        reply = ui.ask("inactive customers")
+
+        assert reply["corrected"] is True
+        assert reply["rows"]["name"].tolist() == ["Bob"]
+        assert "actually stores values such as: 'INACTIVE'" in ui.llm.calls[-1]
+        assert len(ui.llm.calls) == 3
+
+    def test_empty_result_without_a_fixable_problem_is_not_retried(self, harness):
+        ui = harness("SELECT name FROM customer WHERE id = 999").index()
+
+        reply = ui.ask("customer 999")
+
+        assert reply["row_count"] == 0
+        assert len(ui.llm.calls) == 2
+
+    def test_a_retry_that_is_still_empty_keeps_the_first_answer(self, harness):
+        ui = harness(
+            "SELECT name FROM customer WHERE status = 'zzz'",
+            "SELECT name FROM customer WHERE status = 'yyy'",
+        ).index()
+
+        reply = ui.ask("customers")
+
+        assert reply["sql"].endswith("'zzz'")
+        assert not reply.get("corrected")
+
+    def test_answer_has_a_plain_english_plan(self, harness):
+        ui = harness("SELECT name FROM customer WHERE status = 'ACTIVE' LIMIT 5").index()
+
+        reply = ui.ask("active customers")
+
+        assert reply["plan"].startswith("Reads customer")
+        assert "filtered by" in reply["plan"]
+
+    def test_warnings_are_shown(self, harness):
+        ui = harness("SELECT SUM(o.total) FROM orders o JOIN order_item i ON i.order_id = o.id").index()
+
+        reply = ui.ask("total")
+
+        assert reply["warnings"] and "counted more than once" in reply["warnings"][0]
+        assert any("counted more than once" in w.value for w in ui.at.warning)
+
+    def test_edited_sql_runs_through_the_guard(self, harness):
+        ui = harness("SELECT name FROM customer ORDER BY id").index()
+        ui.ask("customers")
+
+        ui.at.text_area(key="edit_sql_1").set_value("SELECT name FROM customer WHERE id = 2")
+        next(b for b in ui.at.button if b.key == "run_edit_1").click().run()
+
+        reply = ui.messages[1]
+        assert reply["rows"]["name"].tolist() == ["Bob"]
+        assert reply["edited"] is True
+        assert reply["sql"] == "SELECT name FROM customer WHERE id = 2"
+
+    def test_edited_write_sql_is_refused(self, harness, shop_db):
+        ui = harness("SELECT name FROM customer ORDER BY id").index()
+        ui.ask("customers")
+
+        ui.at.text_area(key="edit_sql_1").set_value("DELETE FROM customer")
+        next(b for b in ui.at.button if b.key == "run_edit_1").click().run()
+
+        assert "Only SELECT" in ui.messages[1]["edit_error"]
+        assert ui.messages[1]["rows"]["name"].tolist() == ["Ann", "Bob"]
+
+    def test_edited_sql_that_fails_keeps_the_old_answer(self, harness):
+        ui = harness("SELECT name FROM customer ORDER BY id").index()
+        ui.ask("customers")
+
+        ui.at.text_area(key="edit_sql_1").set_value("SELECT nope FROM customer")
+        next(b for b in ui.at.button if b.key == "run_edit_1").click().run()
+
+        assert ui.messages[1]["edit_error"]
+        assert ui.messages[1]["sql"] == "SELECT name FROM customer ORDER BY id"
+
+    def test_follow_up_chip_asks_the_question(self, harness):
+        ui = harness(
+            "SELECT id, total, placed_on FROM orders ORDER BY id",
+            "SELECT id, total FROM orders ORDER BY total DESC",
+        ).index()
+        ui.ask("orders")
+
+        chips = [b for b in ui.at.button if b.key and b.key.startswith("followup_")]
+        assert chips
+        chips[0].click().run()
+
+        assert ui.messages[-2]["role"] == "user"
+        assert ui.messages[-2]["content"] == chips[0].label

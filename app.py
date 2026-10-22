@@ -18,7 +18,7 @@ from database.connection_manager import get_engine
 from database.dialects import DIALECTS, get_dialect, is_configured
 from database.database_inspector import inspect_database
 from database.query_executor import execute_query
-from database.sql_guard import validate_sql
+from database.sql_guard import classify_sql, validate_sql
 
 from rag.context_builder import build_context
 from rag.embeddings import (
@@ -65,6 +65,15 @@ from services.example_questions import (
     build_candidates,
     verify_examples,
 )
+from services.followups import suggest_followups
+from services.query_checks import (
+    estimate_plan,
+    find_stored_values,
+    plan_label,
+    plan_warnings,
+    review,
+)
+from services.sql_explain import describe_sql
 from services.example_store import (
     add_example,
     find_similar,
@@ -77,6 +86,7 @@ from services.query_service import (
     NoSQLGenerated,
     build_history,
     process_question,
+    refine_question,
     repair_question,
     summarize_result,
 )
@@ -375,6 +385,8 @@ def run_example(example, settings):
         "sql": example.sql,
         "tables": example.tables,
         "example": True,
+        "dialect": settings.dialect_key,
+        "plan": describe_sql(example.sql, settings.dialect_key),
         "input_tokens": 0,
         "output_tokens": 0,
     }
@@ -1054,6 +1066,115 @@ def approve_message(index):
     )
 
 
+def annotate(message, config):
+    """Fill in the plain-English plan, plan estimate and plausibility warnings."""
+
+    dialect_key = message.get("dialect", "postgresql")
+
+    message["plan"] = describe_sql(message["sql"], dialect_key)
+
+    rows = message.get("rows")
+
+    issues = []
+    estimate = None
+
+    try:
+
+        issues = review(
+            message["sql"],
+            rows,
+            dialect_key,
+            st.session_state.database_metadata,
+        )
+
+        if rows is not None and not message.get("example"):
+
+            estimate = estimate_plan(
+                message["datasource"],
+                message["sql"],
+                config,
+                dialect_key,
+            )
+
+    except Exception:
+
+        logger.warning("Query checks failed", exc_info=True)
+
+    message["issues"] = issues
+    message["warnings"] = [issue.text for issue in issues] + plan_warnings(estimate)
+    message["estimate"] = plan_label(estimate)
+
+
+def run_edited_sql(index):
+    """Run SQL the user edited in an answer. Same guard and executor as every query."""
+
+    message = st.session_state.messages[index]
+
+    sql = st.session_state.get(f"edit_sql_{index}", "").strip().rstrip(";").strip()
+
+    dialect_key = message.get("dialect", "postgresql")
+    config = all_datasources().get(message["datasource"])
+
+    message.pop("edit_error", None)
+
+    try:
+
+        operation = classify_sql(sql, dialect_key)
+
+        if operation != "READ":
+
+            raise ValueError(
+                f"Only SELECT queries can be run here (this is {operation})."
+            )
+
+        validation = validate_sql(sql, st.session_state.access_policy, dialect_key)
+
+        if not validation.allowed:
+            raise ValueError(f"Rejected by the safety guard: {validation.reason}")
+
+    except Exception as exc:
+
+        message["edit_error"] = str(exc)
+
+        return
+
+    result = execute_query(message["datasource"], sql, config)
+
+    audit(
+        "edit",
+        datasource=message["datasource"],
+        dialect=dialect_key,
+        question=message.get("question"),
+        sql=sql,
+        outcome="error" if result.error else "ok",
+        rows=result.row_count,
+        elapsed_ms=round(result.execution_ms),
+        error=result.error,
+    )
+
+    if result.error:
+
+        message["edit_error"] = result.error
+
+        return
+
+    message["sql"] = sql
+    message["rows"] = result.rows
+    message["row_count"] = result.row_count
+    message["content"] = f"**{result.row_count} rows** in {result.execution_ms:.0f} ms"
+    message["edited"] = True
+
+    for stale in ("error", "blocked", "summary", "corrected", "approved", "example"):
+        message.pop(stale, None)
+
+    annotate(message, config)
+
+
+def ask_followup(text):
+
+    st.session_state.pending_question = text
+
+
 def render_result(rows):
 
     if rows.empty:
@@ -1089,7 +1210,7 @@ def render_result(rows):
             st.bar_chart(frame)
 
 
-def render_message(message, index):
+def render_message(message, index, followups=False):
 
     with st.chat_message(message["role"]):
 
@@ -1115,6 +1236,17 @@ def render_message(message, index):
 
             st.markdown(f"> {message['summary']}")
 
+        if message.get("plan"):
+
+            st.caption(message["plan"])
+
+        if message.get("warnings"):
+
+            st.warning(
+                "\n".join(f"- {text}" for text in message["warnings"]),
+                icon=":material/warning:",
+            )
+
         if message.get("blocked"):
 
             st.warning(
@@ -1136,9 +1268,37 @@ def render_message(message, index):
                 else "SQL"
             )
 
+            if message.get("edited"):
+                label += " (edited)"
+
             with st.expander(label, expanded=rows is None):
 
-                st.code(message["sql"], language="sql")
+                if message.get("blocked"):
+
+                    st.code(message["sql"], language="sql")
+
+                else:
+
+                    st.text_area(
+                        "SQL",
+                        value=message["sql"],
+                        key=f"edit_sql_{index}",
+                        height="content",
+                        label_visibility="collapsed",
+                    )
+
+                    st.button(
+                        "Run edited SQL",
+                        key=f"run_edit_{index}",
+                        icon=":material/play_arrow:",
+                        on_click=run_edited_sql,
+                        args=(index,),
+                        help="Runs this SQL through the same safety guard.",
+                    )
+
+                    if message.get("edit_error"):
+
+                        st.error(message["edit_error"])
 
         if rows is not None and not rows.empty:
 
@@ -1182,6 +1342,10 @@ def render_message(message, index):
 
             details.append(f"{message['elapsed_ms'] / 1000:.1f} s")
 
+        if message.get("estimate"):
+
+            details.append(message["estimate"])
+
         if message.get("input_tokens") or message.get("output_tokens"):
 
             details.append(
@@ -1199,6 +1363,25 @@ def render_message(message, index):
 
             st.caption(" · ".join(details))
 
+        if followups and rows is not None:
+
+            suggestions = suggest_followups(rows, message.get("sql", ""))
+
+            if suggestions:
+
+                with st.container(horizontal=True):
+
+                    for position, text in enumerate(suggestions):
+
+                        st.button(
+                            text,
+                            key=f"followup_{index}_{position}",
+                            on_click=ask_followup,
+                            args=(text,),
+                            type="tertiary",
+                            icon=":material/subdirectory_arrow_right:",
+                        )
+
 
 def _history_text(history):
 
@@ -1214,6 +1397,7 @@ def _answer_question(question, history, settings, status):
         "role": "assistant",
         "question": question,
         "datasource": settings.datasource_name,
+        "dialect": settings.dialect_key,
         "input_tokens": 0,
         "output_tokens": 0,
     }
@@ -1354,6 +1538,8 @@ def _answer_question(question, history, settings, status):
 
         message["sql"] = response.sql
 
+        message["plan"] = describe_sql(response.sql, settings.dialect_key)
+
         if response.operation != "READ":
 
             message["content"] = (
@@ -1435,11 +1621,90 @@ def _answer_question(question, history, settings, status):
 
             return message
 
+        if result.rows.empty:
+
+            fixable = [
+                issue
+                for issue in review(
+                    message["sql"],
+                    result.rows,
+                    settings.dialect_key,
+                    st.session_state.database_metadata,
+                )
+                if issue.fixable
+            ]
+
+            problems = [issue.text for issue in fixable]
+
+            if fixable:
+
+                try:
+
+                    problems += find_stored_values(
+                        fixable,
+                        settings.datasource_name,
+                        settings.datasource_config,
+                        settings.dialect_key,
+                        lambda sql: validate_sql(
+                            sql,
+                            policy,
+                            settings.dialect_key,
+                        ).allowed,
+                    )
+
+                except Exception:
+
+                    logger.warning("Stored-value lookup failed", exc_info=True)
+
+            if problems:
+
+                status.update(label="No rows, checking filter values...")
+
+                try:
+
+                    refined = refine_question(
+                        llm=llm,
+                        question=question,
+                        context=context,
+                        history=history,
+                        sql=message["sql"],
+                        problems=problems,
+                        examples=examples,
+                        glossary=glossary,
+                        dialect_key=settings.dialect_key,
+                    )
+
+                    add_usage(refined)
+
+                    if validate_sql(
+                        refined.sql,
+                        policy,
+                        settings.dialect_key,
+                    ).allowed:
+
+                        retry = execute_query(
+                            settings.datasource_name,
+                            refined.sql,
+                            settings.datasource_config,
+                        )
+
+                        if not retry.error and not retry.rows.empty:
+
+                            result = retry
+                            message["sql"] = refined.sql
+                            message["corrected"] = True
+
+                except Exception:
+
+                    logger.warning("Empty-result retry failed", exc_info=True)
+
         message["rows"] = result.rows
         message["row_count"] = result.row_count
         message["content"] = (
             f"**{result.row_count} rows** in {result.execution_ms:.0f} ms"
         )
+
+        annotate(message, settings.datasource_config)
 
         if settings.summarize and not result.rows.empty:
 
@@ -1519,6 +1784,7 @@ def answer_question(question, history, settings, status):
         outcome=_outcome(reply),
         rows=reply.get("row_count"),
         corrected=reply.get("corrected"),
+        warnings=reply.get("warnings") or None,
         tables=reply.get("tables"),
         examples_used=reply.get("examples_used"),
         input_tokens=reply.get("input_tokens"),
@@ -1580,9 +1846,11 @@ def render_chat(datasource_name, busy):
 
             st.markdown("**Ask a question about your database below.**")
 
+    last = len(st.session_state.messages) - 1
+
     for index, message in enumerate(st.session_state.messages):
 
-        render_message(message, index)
+        render_message(message, index, followups=index == last and not busy)
 
 
 def _last_answer_tables():
