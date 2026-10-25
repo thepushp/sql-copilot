@@ -120,8 +120,8 @@ Empty placeholders (safe to delete): `config/settings.py`, `rag/vector_store.py`
 
 - `services/audit.py`: `configure_logging()` (idempotent, called at app start) sets up console logging under the `sql_copilot` logger and a rotating JSON-lines audit file (`data/audit.log`, override with `SQL_COPILOT_AUDIT_LOG`, `off` disables). `audit(event, **fields)` never raises, drops secret-named fields and None values, and truncates long text. Events: `index`, `answer` (outcome ok/blocked/rejected/error/no_sql/clarify, tokens, timing, tables), `example`, `approve`, `connection` (never passwords), `privacy`. Result rows are never logged. Previously silent `except` blocks now log warnings.
 - `tests/conftest.py` points the audit file at a temp path for every test (autouse); the shared `env` fixture (SQLite-only datasources, fake embeddings, isolated glossary/examples) lives there too.
-- Packaging: `README.md`, `LICENSE` (MIT), `requirements.lock` (exact tested versions, Python 3.14; regenerate with the command in its header), `requirements-dev.txt`, `Dockerfile` (lint-checked only, not yet built), `.github/workflows/ci.yml`, `.streamlit/config.toml` (binds 127.0.0.1, telemetry off).
-- Design stance: no built-in authentication (open-source, self-hosted tool). The README tells people to put their own proxy/VPN in front if they share it.
+- Packaging: `README.md`, `requirements.lock` (exact tested versions, Python 3.14; regenerate with the command in its header), `requirements-dev.txt`, `Dockerfile` (lint-checked only, not yet built), `.github/workflows/ci.yml`, `.streamlit/config.toml` (binds 127.0.0.1, telemetry off).
+- Design stance: no built-in authentication (self-hosted tool). The README tells people to put their own proxy/VPN in front if they share it.
 
 ## Conventions
 

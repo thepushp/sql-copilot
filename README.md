@@ -120,4 +120,4 @@ The UI tests drive the real app with a scripted stand-in model, fake embeddings 
 
 ## License
 
-[MIT](LICENSE) © 2026 Pushpraj Priy
+© 2026 Pushpraj Priy. All rights reserved.

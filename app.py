@@ -116,7 +116,7 @@ BASE_CSS = """
   display: flex !important; position: fixed; top: 0.95rem; left: 3.6rem; z-index: 1000002;
   font-weight: 600; white-space: nowrap; pointer-events: none;
 }
-/* Deploy targets Streamlit Community Cloud, which an open-source self-hosted
+/* Deploy targets Streamlit Community Cloud, which a self-hosted
    tool does not use. The three-dot menu (Rerun, ...) stays. */
 [data-testid="stAppDeployButton"] { display: none !important; }
 /* The explorer's table list reads like a file tree: left-aligned, one line each. */
