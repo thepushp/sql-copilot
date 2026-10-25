@@ -588,6 +588,7 @@ class TestNavigation:
         css = " ".join(bodies)
         assert ".sqlcopilot-brand" in css
         assert 'aria-expanded="false"' in css, "shown only while the sidebar is collapsed"
+        assert 'data-collapsed="true"' in css, "newer Streamlit marks the sidebar this way"
 
     def test_header_shows_the_connection_once_indexed(self, harness):
         ui = harness("SELECT 1")

@@ -112,7 +112,8 @@ BASE_CSS = """
 /* The app name appears in the empty top strip only while the sidebar (which
    shows it itself) is collapsed. */
 .sqlcopilot-brand { display: none !important; }
-.stApp:has([data-testid="stSidebar"][aria-expanded="false"]) .sqlcopilot-brand {
+.stApp:has([data-testid="stSidebar"][aria-expanded="false"]) .sqlcopilot-brand,
+.stApp:has([data-testid="stSidebar"][data-collapsed="true"]) .sqlcopilot-brand {
   display: flex !important; position: fixed; top: 0.95rem; left: 3.6rem; z-index: 1000002;
   font-weight: 600; white-space: nowrap; pointer-events: none;
 }

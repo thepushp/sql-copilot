@@ -127,8 +127,13 @@ def test_theme_colour_is_applied(page):
 SIDEBAR = '[data-testid="stSidebar"]'
 
 
+SIDEBAR_EXPANDED_JS = """e => e.hasAttribute('data-collapsed')
+    ? String(e.getAttribute('data-collapsed') !== 'true')
+    : e.getAttribute('aria-expanded')"""
+
+
 def sidebar_state(page):
-    return page.locator(SIDEBAR).get_attribute("aria-expanded")
+    return page.locator(SIDEBAR).evaluate(SIDEBAR_EXPANDED_JS)
 
 
 def collapse_sidebar(page):
@@ -141,7 +146,7 @@ def collapse_sidebar(page):
     page.locator(SIDEBAR).hover()
     page.get_by_test_id("stSidebarCollapseButton").click(timeout=5000)
     page.wait_for_function(
-        "document.querySelector('[data-testid=stSidebar]').getAttribute('aria-expanded') === 'false'",
+        f"({SIDEBAR_EXPANDED_JS})(document.querySelector('[data-testid=stSidebar]')) === 'false'",
         timeout=5000,
     )
 
