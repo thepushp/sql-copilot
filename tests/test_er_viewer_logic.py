@@ -1,3 +1,4 @@
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,4 +21,4 @@ def test_viewer_layout_and_selection_logic():
     )
 
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-1000:]
-    assert "# fail 0" in result.stdout
+    assert re.search(r"\bfail 0\b", result.stdout)
