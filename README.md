@@ -24,6 +24,26 @@ Ask questions about your database in plain English and get SQL, results, charts 
 - **Interactive ER diagrams:** around a table, a whole schema, or the tables behind your last answer. Click a column, a relationship line or a table header to highlight how it connects to other tables (click a primary key to see every table that references it). The Columns and View dropdowns say what they control and what is currently chosen. **Export** saves a PNG image (twice the on-screen size, whole diagram), an SVG, or Mermaid / Graphviz text; image exports match what you see, including any highlight and the light or dark theme
 - **Audit log:** a local record of what was asked and what SQL ran (never the data)
 
+## Screenshots
+
+The screenshots use a small demo shop database (SQLite).
+
+**Verified example questions on the landing page** (run instantly, no model needed)
+
+![Chat landing page with verified example questions](docs/screenshots/chat-landing.png)
+
+**An answer with table, chart, SQL, CSV download and follow-up suggestions**
+
+![Chat answer showing a result table](docs/screenshots/chat-answer.png)
+
+**Explorer:** browse, filter, sort and export table data
+
+![Explorer showing the Data section of a table](docs/screenshots/explorer.png)
+
+**Interactive ER diagram**
+
+![Interactive ER diagram of the whole schema](docs/screenshots/er-diagram.png)
+
 ## Quick start
 
 ```bash
