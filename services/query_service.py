@@ -149,6 +149,7 @@ def _generate(
     dialect_key="postgresql",
     previous_sql="",
     on_token=None,
+    rejected="",
 ) -> QueryResponse:
 
     dialect = get_dialect(dialect_key)
@@ -163,6 +164,7 @@ def _generate(
             "limit_hint": dialect.limit_hint,
             "context": context,
             "examples": examples or "None",
+            "rejected": rejected or "None",
             "glossary": glossary.strip() or "None",
             "question": question,
             "history": history or [],
@@ -206,11 +208,12 @@ def process_question(
     dialect_key: str = "postgresql",
     previous_sql: str = "",
     on_token=None,
+    rejected: str = "",
 ) -> QueryResponse:
 
     return _generate(
         llm, question, context, history, examples, glossary, dialect_key,
-        previous_sql, on_token,
+        previous_sql, on_token, rejected,
     )
 
 

@@ -14,6 +14,7 @@ from services.followups import suggest_followups
 from services.sql_qualify import format_sql
 from services.result_diff import compare_results, sql_diff
 from services.example_store import add_example, remove_example
+from services.feedback_store import add_rejection, remove_rejection
 from ui.answering import annotate
 from ui.state import all_datasources
 
@@ -29,6 +30,8 @@ def approve_message(index):
     )
 
     message["approved"] = True
+
+    remove_rejection(message["datasource"], message["question"], message["sql"])
 
     audit(
         "approve",
@@ -60,6 +63,8 @@ def reject_message(index):
     note = (st.session_state.get(f"feedback_note_{index}") or "").strip()
 
     message["feedback"] = {"rating": "down", "reason": reason, "note": note}
+
+    add_rejection(message["datasource"], message["question"], message["sql"], reason, note)
 
     if message.get("approved"):
 
@@ -448,6 +453,12 @@ def render_message(message, index, followups=False):
                 f"{message['examples_used']} approved example(s) used"
             )
 
+        if message.get("rejections_used"):
+
+            details.append(
+                f"{message['rejections_used']} rejected answer(s) avoided"
+            )
+
         if message.get("elapsed_ms"):
 
             details.append(f"{message['elapsed_ms'] / 1000:.1f} s")
@@ -472,6 +483,14 @@ def render_message(message, index, followups=False):
         if details:
 
             st.caption(" · ".join(details))
+
+        if message.get("steps"):
+
+            with st.expander("How this was answered"):
+
+                for label, seconds in message["steps"]:
+
+                    st.caption(f"✓ {label} · {seconds:.1f}s")
 
         if followups and rows is not None:
 

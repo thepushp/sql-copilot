@@ -90,3 +90,30 @@ def test_constraints_naming_hidden_columns_are_dropped():
     filtered, _ = apply_privacy(metadata, PrivacySettings())
 
     assert [c.name for c in filtered.schemas[0].tables[0].constraints] == ["c2"]
+
+
+def test_triggers_are_found_and_withheld_when_they_name_hidden_columns(tmp_path):
+    path = tmp_path / "t.db"
+    con = sqlite3.connect(path)
+    con.executescript(
+        """
+        CREATE TABLE person(id INTEGER PRIMARY KEY, name TEXT, password TEXT);
+        CREATE TABLE audit(note TEXT);
+        CREATE TRIGGER log_rename AFTER UPDATE OF name ON person
+            BEGIN INSERT INTO audit VALUES ('renamed'); END;
+        CREATE TRIGGER log_login AFTER UPDATE OF password ON person
+            BEGIN INSERT INTO audit VALUES ('login'); END;
+        """
+    )
+    con.commit()
+    con.close()
+    config = {"driver": "sqlite", "database": str(path)}
+
+    raw = tables(inspect_database("t", config))
+
+    assert {t.name for t in raw["person"].triggers} == {"log_rename", "log_login"}
+    assert raw["audit"].triggers == []
+
+    filtered, _ = apply_privacy(inspect_database("t", config), PrivacySettings())
+
+    assert [t.name for t in tables(filtered)["person"].triggers] == ["log_rename"]

@@ -11,18 +11,18 @@ Ask questions about your database in plain English and get SQL, results, charts 
 - **Schema-aware answers:** tables, columns, keys, comments, views and sample values are indexed; a hybrid (embedding + keyword) search plus a model-driven table selection picks what the model sees
 - **Safe by design:** one read-only statement only; writes, locks, dangerous functions and system catalogs are blocked; queries run in a read-only transaction with a timeout and a 500-row cap
 - **Verified example questions:** the landing page offers questions built from your schema and checked against your database, so they always work and need no model
-- **Conversation:** follow-ups, clarifying questions, automatic repair of failing queries, a 👍 button that teaches the app your verified answers, and a 👎 **Wrong** button that records why (wrong tables, wrong filter, ...), stops using that answer as an example and offers **Try again** with your reason
-- **Live progress:** each step is listed with its time and the SQL appears as the model writes it
+- **Conversation:** follow-ups, clarifying questions, automatic repair of failing queries, a 👍 button that teaches the app your verified answers, and a 👎 **Wrong** button that records why (wrong tables, wrong filter, ...), stops using that answer as an example, offers **Try again** with your reason, and warns the model away from that answer when you ask something similar
+- **Live progress:** each step is listed with its time (kept under *How this was answered*) and the SQL appears as the model writes it
 - **Edit and compare:** every answer's SQL is editable and re-runs through the same checks; a *What changed* panel shows the SQL diff and which rows were added or removed
 - **Business glossary:** define your own terms (`bus: the vehicle table`)
 - **Privacy controls:** exclude schemas/tables, hide columns by pattern, turn off sample values
 - **Results:** a sortable table with formatted numbers and dates and a row filter, a chart you can switch (bar, line, area, scatter, pie, histogram; pick axes, combine rows, split by), CSV download, optional plain-language summary
 - **Clean, compact interface:** a slim header with Chat / Explorer / ER diagram sections that stays pinned while you scroll (the app name moves to the top strip when the sidebar is collapsed), toolbars that wrap on narrow windows, light and dark theme support, and a diagram canvas that uses the rest of the window
-- **Explorer:** a navigator with search across every schema (table names, column names, comments, known values), starred and recently opened tables, next to a table page with four sections:
-  - **Properties:** columns, types, keys and what they point to, indexes, constraints, a view's definition, table size (PostgreSQL), clickable "references" and "referenced by" lists, and an on-demand **column profile** (nulls, distinct values, range, spread chart, common values; large tables are sampled)
+- **Explorer:** a navigator with search across every schema (table names, column names, comments, known values), starred (remembered between runs) and recently opened tables, next to a table page with four sections:
+  - **Properties:** columns, types, keys and what they point to, indexes, constraints, triggers, a view's definition, table size (PostgreSQL), clickable "references" and "referenced by" lists, and an on-demand **column profile** (nulls, distinct values, range, spread chart, common values; large tables are sampled)
   - **Data:** a paged, sortable, filterable view of the rows with a column chooser, column statistics, a row count on demand, and export to CSV, JSON or Excel (up to 10,000 rows). Select a row to see it in full and jump to the row it points to, or to the rows that point at it. A **Query plan** shows how the database would run the query without running it
   - **Diagram:** the table and its neighbours, with a shortcut to the full ER diagram
-  - **SQL:** ready-made SQL for the table (select, count, group, joins through relationships) that you can run, insert / update / delete / CREATE TABLE statements for review only, and a read-only editor for your own `SELECT` queries
+  - **SQL:** ready-made SQL for the table (select, count, group, joins through relationships) that you can run, insert / update / delete / CREATE TABLE statements for review only, and a read-only editor for your own `SELECT` queries (with a history of what you ran)
 - **Interactive ER diagrams:** around a table, a whole schema, or the tables behind your last answer. Click a column, a relationship line or a table header to highlight how it connects to other tables (click a primary key to see every table that references it). The Columns and View dropdowns say what they control and what is currently chosen. **Export** saves a PNG image (twice the on-screen size, whole diagram), an SVG, or Mermaid / Graphviz text; image exports match what you see, including any highlight and the light or dark theme. Also: a find-table box (press `/`), schema colours, a legend, a minimap, full screen, and a page address you can share to reopen the same view.
 - **Audit log:** a local record of what was asked and what SQL ran (never the data)
 
@@ -104,7 +104,7 @@ These are safeguards, not guarantees. **Always connect with a database user that
 
 - Your questions and recent chat history
 - Table and column names, types, comments, and up to 10 common values for low-cardinality text columns (PostgreSQL)
-- Your glossary and approved example queries
+- Your glossary, approved example queries, and answers you marked wrong (the question, that SQL, the reason and your note) when you ask something similar
 - With *Summarize results* turned on: the first 20 result rows
 
 Use Ollama or another local model to keep everything on your machine. Use the **Privacy** panel to exclude tables, hide columns (defaults hide `*password*`, `*token*`, `*secret*`, `*ssn*`, `*api_key*`) and turn off sample values.
@@ -137,7 +137,7 @@ The UI tests drive the real app with a scripted stand-in model, fake embeddings 
 
 - Answer quality depends on the model and on how clearly your schema is named; there is no benchmark suite yet. Use the glossary for ambiguous terms.
 - Single-process Streamlit app: fine for personal or small-team use, not built for many concurrent users.
-- The glossary and approved examples are stored per server (`data/`), not per user.
+- The glossary, approved examples, rejected answers and starred tables are stored per server (`data/`), not per user.
 - Non-PostgreSQL databases get less metadata (no sample values or row estimates).
 
 ## License

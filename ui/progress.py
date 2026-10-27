@@ -15,6 +15,7 @@ class Progress:
         self.step_label = None
         self.step_started = self.started
         self.slot = None
+        self.steps = []
 
     def _finish_step(self, now):
 
@@ -25,6 +26,8 @@ class Progress:
         with self.status:
 
             st.caption(f"✓ {self.step_label} · {now - self.step_started:.1f}s")
+
+        self.steps.append((self.step_label, now - self.step_started))
 
         self.step_label = None
 

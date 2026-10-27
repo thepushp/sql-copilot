@@ -1118,8 +1118,55 @@ class TestFeedback:
         assert "Wrong tables" in question and "list customers" in question
         assert ui.messages[-1]["role"] == "assistant"
 
+    def test_a_rejected_answer_is_avoided_for_the_same_question(self, harness):
+        ui = harness("SELECT name FROM customer", "SELECT name FROM customer ORDER BY name").index()
+        ui.ask("list customers")
+        self._send(ui, "Wrong filter or value", "only active ones")
+
+        again = ui.ask("list customers")
+
+        prompt = ui.llm.calls[-1]
+        assert again["rejections_used"] == 1
+        assert "PREVIOUSLY REJECTED ANSWERS" in prompt
+        assert "Wrong SQL:" in prompt and "only active ones" in prompt
+        assert any("1 rejected answer(s) avoided" in c.value for c in ui.at.caption)
+
+    def test_unrelated_questions_are_not_warned(self, harness):
+        ui = harness("SELECT name FROM customer").index()
+        ui.ask("list customers")
+        self._send(ui)
+
+        other = ui.ask("zzz qqq completely different words")
+
+        assert other["rejections_used"] == 0
+
+    def test_approving_the_same_answer_later_clears_the_rejection(self, harness):
+        from services.feedback_store import load_rejections
+
+        ui = harness("SELECT name FROM customer").index()
+        ui.ask("list customers")
+        self._send(ui)
+        assert len(load_rejections()) == 1
+
+        ui.ask("list customers")
+        ui.button(sidebar=False, key="approve_3").click().run()
+
+        assert load_rejections() == []
+
     def test_review_only_sql_cannot_be_rated(self, harness):
         ui = harness("DELETE FROM customer").index()
         ui.ask("remove everyone")
 
         assert not [b for b in ui.at.main.button if b.label == "Wrong"]
+
+
+class TestStepsAndPersistence:
+
+    def test_step_timings_are_kept_on_the_answer(self, harness):
+        ui = harness("SELECT name FROM customer").index()
+        reply = ui.ask("list customers")
+
+        labels = [label for label, _ in reply["steps"]]
+        assert any("SQL" in label for label in labels) and any("query" in label.lower() for label in labels)
+        assert all(seconds >= 0 for _, seconds in reply["steps"])
+        assert any(e.label == "How this was answered" for e in ui.at.main.expander)

@@ -59,7 +59,7 @@ def _column_blocked(name, patterns):
 
 
 def _withhold_revealing_details(metadata, policy):
-    """Drop view definitions and constraints that name hidden columns or excluded tables."""
+    """Drop view definitions, constraints and triggers that name hidden columns or excluded tables."""
 
     names = {name for name in policy.blocked_columns} | {
         qualified.split(".")[-1] for qualified in policy.blocked_tables
@@ -86,6 +86,12 @@ def _withhold_revealing_details(metadata, policy):
                 constraint
                 for constraint in table.constraints
                 if not pattern.search(constraint.definition or "")
+            ]
+
+            table.triggers = [
+                trigger
+                for trigger in table.triggers
+                if not pattern.search(trigger.definition or "")
             ]
 
 

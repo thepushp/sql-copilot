@@ -163,6 +163,8 @@ def render_chat_view(settings):
                     expanded=False,
                 )
 
+                reply["steps"] = list(progress.steps)
+
         st.session_state.messages.append(reply)
 
         st.rerun()

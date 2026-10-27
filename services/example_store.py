@@ -108,19 +108,8 @@ def _embed(embeddings, model_name, texts):
     )
 
 
-def find_similar(
-    embeddings,
-    model_name: str,
-    datasource: str,
-    question: str,
-    limit: int = 3,
-) -> list[dict]:
-
-    candidates = [
-        example
-        for example in load_examples()
-        if example["datasource"] == datasource
-    ]
+def rank_similar(embeddings, model_name, candidates, question, limit):
+    """The candidates whose "question" is closest to this one (cosine >= MIN_SIMILARITY)."""
 
     if not candidates or limit <= 0:
         return []
@@ -128,7 +117,7 @@ def find_similar(
     matrix = _embed(
         embeddings,
         model_name,
-        [example["question"] for example in candidates],
+        [candidate["question"] for candidate in candidates],
     )
 
     query = np.array(embeddings.embed_query(question))
@@ -144,10 +133,27 @@ def find_similar(
     )
 
     return [
-        example
-        for score, example in ranked[:limit]
+        candidate
+        for score, candidate in ranked[:limit]
         if score >= MIN_SIMILARITY
     ]
+
+
+def find_similar(
+    embeddings,
+    model_name: str,
+    datasource: str,
+    question: str,
+    limit: int = 3,
+) -> list[dict]:
+
+    candidates = [
+        example
+        for example in load_examples()
+        if example["datasource"] == datasource
+    ]
+
+    return rank_similar(embeddings, model_name, candidates, question, limit)
 
 
 def format_examples(examples: list[dict]) -> str:

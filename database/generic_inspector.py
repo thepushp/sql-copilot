@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.engine.reflection import ObjectKind
 
 from database.connection_manager import get_engine
@@ -13,6 +13,7 @@ from database.schema_metadata import (
     IndexMetadata,
     SchemaMetadata,
     TableMetadata,
+    TriggerMetadata,
 )
 
 
@@ -64,6 +65,52 @@ def _schemas(inspector, config, dialect):
         for name in inspector.get_schema_names()
         if name.lower() not in system
     ]
+
+
+def _triggers(engine, dialect, schema):
+    """{table name: [TriggerMetadata]} where the database lets us list them."""
+
+    found = {}
+
+    try:
+
+        with engine.connect() as connection:
+
+            if dialect.key == "sqlite":
+
+                rows = connection.execute(
+                    text("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger'")
+                ).all()
+
+                for name, table, definition in rows:
+                    found.setdefault(table, []).append(
+                        TriggerMetadata(name=name, definition=definition or "")
+                    )
+
+            elif dialect.key == "mysql":
+
+                rows = connection.execute(
+                    text(
+                        "SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE, ACTION_TIMING, "
+                        "EVENT_MANIPULATION, ACTION_STATEMENT "
+                        "FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = :schema"
+                    ),
+                    {"schema": schema},
+                ).all()
+
+                for name, table, timing, event, statement in rows:
+                    found.setdefault(table, []).append(
+                        TriggerMetadata(
+                            name=name,
+                            definition=f"{timing} {event} ON {table} FOR EACH ROW {statement}",
+                        )
+                    )
+
+    except Exception as exc:
+
+        logger.debug("Triggers not available: %s", exc)
+
+    return found
 
 
 def inspect_generic(
@@ -124,6 +171,8 @@ def inspect_generic(
             schema=schema,
             kind=ObjectKind.ANY,
         )
+
+        triggers = _triggers(engine, dialect, schema)
 
         display_schema = schema or "main"
 
@@ -225,6 +274,8 @@ def inspect_generic(
                         definition=f"CHECK ({check.get('sqltext')})",
                     )
                 )
+
+            table.triggers = list(triggers.get(table_name, []))
 
             if table.kind == "view":
 

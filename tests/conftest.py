@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from config.datasource_config import DATASOURCES
-from services import example_store, glossary
+from services import example_store, favorites, feedback_store, glossary
 
 from langchain_community.embeddings import DeterministicFakeEmbedding
 
@@ -214,6 +214,8 @@ def env(monkeypatch, tmp_path, shop_db):
 
     monkeypatch.setattr(example_store, "STORE_PATH", tmp_path / "examples.json")
     monkeypatch.setattr(glossary, "GLOSSARY_PATH", tmp_path / "glossary.txt")
+    monkeypatch.setattr(feedback_store, "STORE_PATH", tmp_path / "rejected.json")
+    monkeypatch.setattr(favorites, "FAVORITES_PATH", tmp_path / "favorites.json")
     monkeypatch.setattr("rag.embeddings.get_embeddings", lambda model_name=None: APP_EMBEDDINGS)
     monkeypatch.delenv("FLYWAY_MIGRATION_PATH", raising=False)
 

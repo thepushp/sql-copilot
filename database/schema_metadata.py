@@ -45,6 +45,12 @@ class ConstraintMetadata:
 
 
 @dataclass
+class TriggerMetadata:
+    name: str
+    definition: str
+
+
+@dataclass
 class TableMetadata:
     schema: str
     name: str
@@ -73,6 +79,7 @@ class TableMetadata:
     constraints: list[ConstraintMetadata] = field(default_factory=list)
     definition: str | None = None
     size_bytes: int | None = None
+    triggers: list[TriggerMetadata] = field(default_factory=list)
 
 
 @dataclass

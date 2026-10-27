@@ -25,6 +25,7 @@ from services.column_profile import (
     summarize,
 )
 from services.data_profile import profile
+from services.favorites import load_favorites, save_favorites
 from services.er_diagram import (
     MAX_TABLES,
     build_dot,
@@ -49,12 +50,14 @@ from services.sql_qualify import format_sql
 from services.sql_templates import generate_templates, group_template
 from services.table_info import column_targets, incoming, outgoing
 from ui.common import NAV_ER, current_theme, show_html
+from ui.history import one_line
 from ui.results import render_result
 
 
 SECTIONS = ["Properties", "Data", "Diagram", "SQL"]
 PAGE_SIZES = [25, 50, 100, 200]
 RECENT_LIMIT = 8
+FREE_HISTORY = 15
 LIST_VIEWS = ["All", "Starred", "Recent"]
 NAV_LIMIT = 80
 GROUP_LABEL = "Count rows per column…"
@@ -111,7 +114,7 @@ def select_table(key):
     st.session_state["explorer_recent"] = ([key] + recent)[:RECENT_LIMIT]
 
 
-def toggle_favorite(key):
+def toggle_favorite(key, datasource):
 
     starred = list(st.session_state.get("explorer_favorites", []))
 
@@ -121,6 +124,17 @@ def toggle_favorite(key):
         starred.append(key)
 
     st.session_state["explorer_favorites"] = starred
+
+    save_favorites(datasource, starred)
+
+
+def _load_stars(datasource):
+    """Stars are kept per datasource; read them when the datasource changes."""
+
+    if st.session_state.get("_stars_for") != datasource:
+
+        st.session_state["explorer_favorites"] = load_favorites(datasource)
+        st.session_state["_stars_for"] = datasource
 
 
 def open_row(table_key, column, value, dialect_key):
@@ -536,6 +550,16 @@ def render_properties(settings, table, key, index):
             hide_index=True,
             width="stretch",
         )
+
+    if table.triggers:
+
+        st.markdown(f"**Triggers** ({len(table.triggers)})")
+
+        for trigger in table.triggers:
+
+            with st.expander(trigger.name):
+
+                st.code(trigger.definition, language="sql")
 
     if table.flyway_managed:
 
@@ -1004,6 +1028,12 @@ def run_free_query(settings, key):
 
     st.session_state["sql_free_result"] = {"sql": sql, "result": result, "error": error}
 
+    if sql:
+
+        past = [item for item in st.session_state.get("sql_free_history", []) if item != sql]
+
+        st.session_state["sql_free_history"] = ([sql] + past)[:FREE_HISTORY]
+
 
 def render_free_query(settings, key, template_sql):
     """A free-form read-only editor; same guard and executor as everything else."""
@@ -1030,6 +1060,23 @@ def render_free_query(settings, key, template_sql):
             "Use the generated SQL above", key="free_template",
             on_click=_use_template, args=(template_sql,),
         )
+
+        history = st.session_state.get("sql_free_history", [])
+
+        if history:
+
+            with st.popover("History", icon=":material/history:"):
+
+                for position, past in enumerate(history):
+
+                    st.button(
+                        one_line(past, 60),
+                        key=f"free_history_{position}",
+                        on_click=_use_template,
+                        args=(past,),
+                        help=past,
+                        width="stretch",
+                    )
 
         sql = (st.session_state.get("sql_free") or "").strip().rstrip(";").strip()
 
@@ -1137,7 +1184,7 @@ def render_table_page(settings, index):
             ":orange[★]" if starred else "☆",
             key="fav_toggle",
             on_click=toggle_favorite,
-            args=(key,),
+            args=(key, settings.datasource_name),
             type="tertiary",
             help="Remove from starred" if starred else "Star this table",
         )
@@ -1183,6 +1230,8 @@ def render_explorer(settings):
         return
 
     index = table_index(metadata)
+
+    _load_stars(settings.datasource_name)
 
     _ensure_selection(index)
 

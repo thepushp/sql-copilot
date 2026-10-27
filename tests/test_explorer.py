@@ -29,6 +29,7 @@ def explorer_db(tmp_path_factory):
         CREATE TABLE secret_notes(id INTEGER PRIMARY KEY, note TEXT);
         CREATE INDEX idx_orders_customer ON orders(customer_id);
         CREATE VIEW open_orders AS SELECT * FROM orders WHERE status = 'OPEN';
+        CREATE TRIGGER orders_changed AFTER UPDATE ON orders BEGIN INSERT INTO secret_notes(note) VALUES ('changed'); END;
         INSERT INTO customer VALUES (1,'Ann','ann@x.org','pw1'),(2,'Zoë',NULL,'pw2'),(3,'Bob','bob@x.org',NULL);
         INSERT INTO secret_notes VALUES (1,'hidden');
         """
@@ -1077,3 +1078,58 @@ class TestPropertiesDetails:
         open_table(ui, "main.orders")
 
         assert not any(e.label == "Definition" for e in ui.at.main.expander)
+
+
+class TestTriggersHistoryAndStars:
+
+    def test_triggers_are_listed(self, ui):
+        open_table(ui, "main.orders")
+
+        assert any(m.value.startswith("**Triggers** (1)") for m in ui.at.markdown)
+        assert any(e.label == "orders_changed" for e in ui.at.main.expander)
+        assert any("CREATE TRIGGER orders_changed" in c.value for c in ui.at.code)
+
+    def test_a_table_without_triggers_has_no_section(self, ui):
+        open_table(ui, "main.item")
+
+        assert not any(m.value.startswith("**Triggers**") for m in ui.at.markdown)
+
+    def test_stars_survive_a_new_session(self, ui, env, monkeypatch, explorer_db):
+        open_table(ui, "main.item")
+        ui.button(key="fav_toggle", sidebar=False).click().run()
+
+        fresh = Harness(monkeypatch, "SELECT 1")
+        fresh.index().goto(EXPLORER)
+
+        assert fresh.at.session_state.explorer_favorites == ["main.item"]
+
+    def test_stars_are_kept_per_datasource(self, ui):
+        from services.favorites import load_favorites
+
+        open_table(ui, "main.item")
+        ui.button(key="fav_toggle", sidebar=False).click().run()
+
+        assert load_favorites("Shop") == ["main.item"]
+        assert load_favorites("Other") == []
+
+    def test_editor_history_lists_recent_queries_and_reloads_them(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "SQL")
+        editor = lambda: next(t for t in ui.at.text_area if t.key == "sql_free")
+        for sql in ("SELECT id FROM orders", "SELECT status FROM orders"):
+            editor().set_value(sql).run()
+            ui.button(key="free_run", sidebar=False).click().run()
+
+        assert ui.at.session_state.sql_free_history == ["SELECT status FROM orders", "SELECT id FROM orders"]
+
+        ui.button(key="free_history_1", sidebar=False).click().run()
+        assert editor().value == "SELECT id FROM orders"
+
+    def test_editor_history_has_no_duplicates_and_ignores_failures_to_run(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "SQL")
+        for _ in range(2):
+            next(t for t in ui.at.text_area if t.key == "sql_free").set_value("SELECT id FROM orders").run()
+            ui.button(key="free_run", sidebar=False).click().run()
+
+        assert ui.at.session_state.sql_free_history == ["SELECT id FROM orders"]

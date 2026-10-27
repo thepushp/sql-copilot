@@ -14,7 +14,8 @@ from database.schema_metadata import (
     ForeignKeyMetadata,
     IndexMetadata,
     SchemaMetadata,
-    TableMetadata, infer_relationships, infer_shared_key_relationships,
+    TableMetadata,
+    TriggerMetadata, infer_relationships, infer_shared_key_relationships,
 )
 from flyway.flyway_inspector import build_flyway_object_state, inspect_flyway_directory
 
@@ -289,6 +290,28 @@ def _inspect_postgres(
         """
     )
 
+    triggers_sql = text(
+        """
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            t.tgname AS name,
+            pg_get_triggerdef(t.oid, true) AS definition
+        FROM pg_trigger t
+        JOIN pg_class c
+            ON c.oid = t.tgrelid
+        JOIN pg_namespace n
+            ON n.oid = c.relnamespace
+        WHERE NOT t.tgisinternal
+          AND n.nspname NOT IN (
+              'pg_catalog',
+              'information_schema',
+              'pg_toast'
+          )
+        ORDER BY n.nspname, c.relname, t.tgname
+        """
+    )
+
     with get_connection(datasource_name, config) as connection:
 
         columns = (
@@ -337,7 +360,7 @@ def _inspect_postgres(
         )
 
     # Optional details: a failure here must never break discovery.
-    extras, constraints = [], []
+    extras, constraints, triggers = [], [], []
 
     try:
 
@@ -348,6 +371,10 @@ def _inspect_postgres(
         with get_connection(datasource_name, config) as connection:
 
             constraints = connection.execute(constraints_sql).mappings().all()
+
+        with get_connection(datasource_name, config) as connection:
+
+            triggers = connection.execute(triggers_sql).mappings().all()
 
     except Exception as exc:
 
@@ -530,6 +557,16 @@ def _inspect_postgres(
                 definition=row["definition"],
             )
         )
+
+    for row in triggers:
+
+        table = tables.get((row["table_schema"], row["table_name"]))
+
+        if table is not None:
+
+            table.triggers.append(
+                TriggerMetadata(name=row["name"], definition=row["definition"])
+            )
 
     # ---------------------------------------------------------
     # Group Tables By Schema

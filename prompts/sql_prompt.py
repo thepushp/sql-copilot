@@ -120,6 +120,10 @@ SIMILAR APPROVED EXAMPLES (verified correct by the user; reuse their
 patterns, joins and value spellings when relevant)
 {examples}
 
+PREVIOUSLY REJECTED ANSWERS (the user marked these wrong for similar
+questions; do not repeat the same mistake)
+{rejected}
+
 DATABASE CONTEXT
 {context}
 """

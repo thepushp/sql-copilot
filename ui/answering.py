@@ -29,6 +29,7 @@ from services.query_checks import (
 from services.sql_explain import describe_sql
 from services.sql_qualify import finalize_sql, tables_in_sql
 from services.example_store import find_similar, format_examples
+from services.feedback_store import find_similar_rejections, format_rejections
 from services.query_service import (
     NeedsClarification,
     NoSQLGenerated,
@@ -266,6 +267,23 @@ def _answer_question(question, history, settings, status):
 
         message["examples_used"] = len(found)
 
+        try:
+
+            rejected = find_similar_rejections(
+                embeddings.get_embeddings(st.session_state.index_embedding_model),
+                st.session_state.index_embedding_model,
+                settings.datasource_name,
+                question,
+            )
+
+        except Exception:
+
+            logger.warning("Rejected-answer lookup failed", exc_info=True)
+
+            rejected = []
+
+        message["rejections_used"] = len(rejected)
+
         status.update(label="Generating SQL...")
 
         response = process_question(
@@ -278,6 +296,7 @@ def _answer_question(question, history, settings, status):
             dialect_key=settings.dialect_key,
             previous_sql=previous_sql if history else "",
             on_token=getattr(status, "stream", None),
+            rejected=format_rejections(rejected) if rejected else "",
         )
 
         add_usage(response)
@@ -423,6 +442,7 @@ def _answer_question(question, history, settings, status):
                         examples=examples,
                         glossary=glossary,
                         dialect_key=settings.dialect_key,
+                        on_token=getattr(status, "stream", None),
                     )
 
                     add_usage(refined)
