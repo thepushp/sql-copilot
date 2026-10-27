@@ -682,6 +682,16 @@
     }
   }
 
+  var closers = [];
+
+  function closeMenus(except) {
+    closers.forEach(function (close) {
+      if (close !== except) {
+        close();
+      }
+    });
+  }
+
   function initExportMenu(svg, exportsData) {
     var button = document.getElementById("export-button");
     var menu = document.getElementById("export-menu");
@@ -690,6 +700,11 @@
       menu.hidden = !open;
       button.setAttribute("aria-expanded", open ? "true" : "false");
     }
+
+    closers.push(function () {
+      setOpen(false);
+    });
+    var closeSelf = closers[closers.length - 1];
 
     menu.querySelectorAll("[data-export]").forEach(function (item) {
       var kind = item.getAttribute("data-export");
@@ -705,6 +720,7 @@
 
     button.addEventListener("click", function (event) {
       event.stopPropagation();
+      closeMenus(closeSelf);
       setOpen(menu.hidden);
     });
     document.addEventListener("click", function () {
@@ -758,17 +774,96 @@
       });
     }
 
+    closers.push(function () {
+      body.hidden = true;
+      button.setAttribute("aria-expanded", "false");
+    });
+    var closeSelf = closers[closers.length - 1];
+
     button.addEventListener("click", function (event) {
       event.stopPropagation();
+      closeMenus(closeSelf);
       body.hidden = !body.hidden;
       button.setAttribute("aria-expanded", body.hidden ? "false" : "true");
     });
     box.addEventListener("click", function (event) {
       event.stopPropagation();
     });
-    document.addEventListener("click", function () {
-      body.hidden = true;
-      button.setAttribute("aria-expanded", "false");
+    document.addEventListener("click", closeSelf);
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        closeSelf();
+      }
+    });
+  }
+
+  // The app's own dropdowns (Columns, View) live outside this frame, so a
+  // click in here never reaches them. Forward it so they close.
+  function initOutsideClose() {
+    function forward() {
+      try {
+        var parentDoc = window.parent && window.parent.document;
+        if (parentDoc && parentDoc !== document) {
+          ["mousedown", "mouseup", "click"].forEach(function (type) {
+            parentDoc.body.dispatchEvent(
+              new MouseEvent(type, { bubbles: true, cancelable: true, view: window.parent }));
+          });
+        }
+      } catch (error) {
+        /* cross-origin parent: nothing to close */
+      }
+    }
+    document.addEventListener("mousedown", forward);
+  }
+
+  // Fullscreen: the frame is enlarged over the whole app window.
+  function initFullscreen() {
+    var button = document.getElementById("fullscreen");
+    var frame = null;
+    try {
+      frame = window.frameElement;
+    } catch (error) {
+      frame = null;
+    }
+    if (!frame) {
+      button.hidden = true;
+      return;
+    }
+
+    var saved = null;
+    var on = false;
+
+    function apply(enter) {
+      on = enter;
+      if (enter) {
+        saved = frame.getAttribute("style");
+        [
+          ["position", "fixed"], ["top", "0"], ["left", "0"],
+          ["width", "100vw"], ["height", "100vh"], ["max-width", "none"],
+          ["z-index", "999999"], ["border", "0"],
+          ["background", getComputedStyle(document.body).backgroundColor],
+        ].forEach(function (pair) {
+          frame.style.setProperty(pair[0], pair[1], "important");
+        });
+      } else if (saved === null) {
+        frame.removeAttribute("style");
+      } else {
+        frame.setAttribute("style", saved);
+      }
+      button.textContent = enter ? "\u2715" : "\u26F6";
+      button.title = enter ? "Exit full screen (Esc)" : "Full screen";
+      button.setAttribute("aria-pressed", enter ? "true" : "false");
+      window.dispatchEvent(new Event("resize"));
+    }
+
+    button.addEventListener("click", function (event) {
+      event.stopPropagation();
+      apply(!on);
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && on && !document.getElementById("selected").offsetParent) {
+        apply(false);
+      }
     });
   }
 
@@ -1009,6 +1104,8 @@
     show(null);
     summary.textContent = data.summary || "";
     initExportMenu(svg, data.exports || {});
+    initOutsideClose();
+    initFullscreen();
 
     root.__er = { model: model, state: state, select: { column: selectColumn, edge: selectEdge, table: selectTable } };
   }

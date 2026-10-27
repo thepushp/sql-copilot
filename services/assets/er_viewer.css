@@ -145,3 +145,6 @@ svg { display: block; }
 #mini { touch-action: none; cursor: pointer; }
 .mini-table { fill: var(--frame); opacity: 0.8; }
 .mini-view { fill: var(--accent); fill-opacity: 0.12; stroke: var(--accent); vector-effect: non-scaling-stroke; stroke-width: 1.5; }
+
+.icon-btn { font: inherit; color: var(--text); padding: 3px 9px; border: 1px solid var(--btn-border); border-radius: 6px; background: var(--btn); cursor: pointer; flex-shrink: 0; }
+.icon-btn:hover { background: var(--btn-hover); }

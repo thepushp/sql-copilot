@@ -703,3 +703,31 @@ class TestExport:
 
         assert page.locator(".edge.on").count() == 1
         assert page.js_errors == []
+
+
+class TestMenusAndFullscreen:
+
+    def test_only_one_menu_is_open_at_a_time(self, open_viewer, shop_data):
+        page = open_viewer(shop_data)
+
+        page.click("#legend-button")
+        page.click("#export-button")
+        assert page.locator("#legend-body").is_hidden()
+        assert page.locator("#export-menu").is_visible()
+
+        page.click("#legend-button")
+        assert page.locator("#export-menu").is_hidden()
+        assert page.locator("#legend-body").is_visible()
+
+    def test_clicking_the_diagram_closes_menus(self, open_viewer, shop_data):
+        page = open_viewer(shop_data)
+
+        page.click("#legend-button")
+        page.mouse.click(600, 500)
+        assert page.locator("#legend-body").is_hidden()
+
+    def test_fullscreen_button_is_hidden_outside_an_app_frame(self, open_viewer, shop_data):
+        page = open_viewer(shop_data)
+
+        assert page.locator("#fullscreen").is_hidden()
+        assert not page.js_errors
