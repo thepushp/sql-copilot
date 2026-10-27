@@ -59,6 +59,33 @@ def add_example(datasource: str, question: str, sql: str) -> bool:
     return True
 
 
+def remove_example(datasource: str, question: str, sql: str) -> bool:
+
+    entry = {
+        "datasource": datasource,
+        "question": question.strip(),
+        "sql": sql.strip(),
+    }
+
+    examples = load_examples()
+
+    if entry not in examples:
+        return False
+
+    examples = [example for example in examples if example != entry]
+
+    temporary = STORE_PATH.with_suffix(".tmp")
+
+    temporary.write_text(
+        json.dumps(examples, indent=2),
+        encoding="utf-8",
+    )
+
+    temporary.replace(STORE_PATH)
+
+    return True
+
+
 def _embed(embeddings, model_name, texts):
 
     missing = [

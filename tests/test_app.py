@@ -1055,3 +1055,57 @@ class TestShareableLink:
 
         assert ui.at.session_state.er_table == "main.order_item"
         assert ui.at.session_state.er_depth == 2
+
+
+class TestFeedback:
+
+    def _send(self, ui, reason=None, note=None):
+        if reason:
+            ui.radio("feedback_reason_1").set_value(reason)
+        if note:
+            next(t for t in ui.at.text_input if t.key == "feedback_note_1").set_value(note)
+        ui.at.run()
+        ui.button(sidebar=False, key="feedback_send_1").click().run()
+        assert not ui.at.exception, ui.at.exception
+
+    def test_thumbs_down_records_reason_and_note(self, harness):
+        ui = harness("SELECT name FROM customer").index()
+        ui.ask("list customers")
+
+        self._send(ui, "Wrong filter or value", "only active ones")
+
+        assert ui.messages[-1]["feedback"] == {
+            "rating": "down",
+            "reason": "Wrong filter or value",
+            "note": "only active ones",
+        }
+        assert [b for b in ui.at.main.button if b.label == "Marked wrong"]
+        assert not [b for b in ui.at.main.button if b.label == "Send feedback"]
+
+    def test_thumbs_down_removes_an_approved_example(self, harness, env):
+        ui = harness("SELECT name FROM customer").index()
+        ui.ask("list customers")
+        ui.button(sidebar=False, label="Correct").click().run()
+        assert json.loads((env / "examples.json").read_text())
+
+        self._send(ui)
+
+        assert json.loads((env / "examples.json").read_text()) == []
+        assert ui.messages[-1]["approved"] is False
+
+    def test_try_again_asks_with_the_reason(self, harness):
+        ui = harness("SELECT name FROM customer", "SELECT name FROM customer ORDER BY name").index()
+        ui.ask("list customers")
+        self._send(ui, "Wrong tables")
+
+        ui.button(sidebar=False, label="Try again").click().run()
+
+        question = ui.messages[-2]["content"]
+        assert "Wrong tables" in question and "list customers" in question
+        assert ui.messages[-1]["role"] == "assistant"
+
+    def test_review_only_sql_cannot_be_rated(self, harness):
+        ui = harness("DELETE FROM customer").index()
+        ui.ask("remove everyone")
+
+        assert not [b for b in ui.at.main.button if b.label == "Wrong"]

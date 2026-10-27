@@ -118,3 +118,14 @@ def test_format_examples():
     assert format_examples([{"question": "q", "sql": "SELECT 1"}]) == (
         "Question: q\nSQL: SELECT 1"
     )
+
+
+def test_remove_example(env):
+    from services.example_store import add_example, load_examples, remove_example
+
+    add_example("Shop", "q", "SELECT 1")
+    add_example("Shop", "other", "SELECT 2")
+
+    assert remove_example("Shop", "q ", " SELECT 1") is True
+    assert [e["question"] for e in load_examples()] == ["other"]
+    assert remove_example("Shop", "q", "SELECT 1") is False

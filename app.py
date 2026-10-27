@@ -87,6 +87,7 @@ from services.sql_explain import describe_sql
 from services.sql_qualify import finalize_sql, format_sql, tables_in_sql
 from services.example_store import (
     add_example,
+    remove_example,
     find_similar,
     format_examples,
 )
@@ -1084,6 +1085,57 @@ def approve_message(index):
     )
 
 
+FEEDBACK_REASONS = (
+    "Wrong tables",
+    "Wrong filter or value",
+    "Wrong numbers (grouping or totals)",
+    "Missing or extra columns",
+    "Not what I asked",
+    "Other",
+)
+
+
+def reject_message(index):
+    """Thumbs down: remember why, and stop using the answer as an example."""
+
+    message = st.session_state.messages[index]
+
+    reason = st.session_state.get(f"feedback_reason_{index}") or FEEDBACK_REASONS[-1]
+    note = (st.session_state.get(f"feedback_note_{index}") or "").strip()
+
+    message["feedback"] = {"rating": "down", "reason": reason, "note": note}
+
+    if message.get("approved"):
+
+        remove_example(message["datasource"], message["question"], message["sql"])
+
+        message["approved"] = False
+
+    audit(
+        "feedback",
+        datasource=message["datasource"],
+        question=message["question"],
+        sql=message["sql"],
+        rating="down",
+        reason=reason,
+        note=note,
+    )
+
+
+def retry_with_feedback(index):
+
+    message = st.session_state.messages[index]
+
+    feedback = message["feedback"]
+
+    detail = feedback["reason"] + (f": {feedback['note']}" if feedback["note"] else "")
+
+    st.session_state.pending_question = (
+        f"That answer was wrong ({detail}). Please try again: "
+        f"{message['question']}"
+    )
+
+
 def annotate(message, config):
     """Fill in the plain-English plan, plan estimate and plausibility warnings."""
 
@@ -1191,6 +1243,54 @@ def run_edited_sql(index):
 def ask_followup(text):
 
     st.session_state.pending_question = text
+
+
+def render_wrong_button(message, index):
+
+    feedback = message.get("feedback")
+
+    if feedback:
+
+        st.button(
+            "Marked wrong",
+            icon=":material/thumb_down:",
+            key=f"wrong_done_{index}",
+            disabled=True,
+            help=feedback["reason"],
+        )
+
+        st.button(
+            "Try again",
+            icon=":material/refresh:",
+            key=f"retry_{index}",
+            on_click=retry_with_feedback,
+            args=(index,),
+            help="Ask again, telling the model what was wrong.",
+        )
+
+        return
+
+    with st.popover("Wrong", icon=":material/thumb_down:"):
+
+        st.radio(
+            "What was wrong?",
+            FEEDBACK_REASONS,
+            key=f"feedback_reason_{index}",
+        )
+
+        st.text_input(
+            "Details (optional)",
+            key=f"feedback_note_{index}",
+            placeholder="e.g. should only count active students",
+        )
+
+        st.button(
+            "Send feedback",
+            key=f"feedback_send_{index}",
+            on_click=reject_message,
+            args=(index,),
+            type="primary",
+        )
 
 
 def open_er_from_chat(key):
@@ -1309,31 +1409,42 @@ def render_message(message, index, followups=False):
 
                         st.error(message["edit_error"])
 
-        if rows is not None and not rows.empty:
+        has_rows = rows is not None and not rows.empty
+        can_rate = bool(message.get("sql")) and not message.get("blocked") and (
+            rows is not None
+        )
+
+        if has_rows or can_rate:
 
             with st.container(horizontal=True):
 
-                st.download_button(
-                    "CSV",
-                    rows.to_csv(index=False).encode("utf-8"),
-                    file_name="result.csv",
-                    mime="text/csv",
-                    key=f"download_{index}",
-                    icon=":material/download:",
-                )
+                if has_rows:
 
-                st.button(
-                    "Saved" if message.get("approved") else "Correct",
-                    icon=":material/check:" if message.get("approved") else ":material/thumb_up:",
-                    key=f"approve_{index}",
-                    on_click=approve_message,
-                    args=(index,),
-                    disabled=bool(message.get("approved")),
-                    help=(
-                        "Save this question and SQL as a verified example "
-                        "for future similar questions."
-                    ),
-                )
+                    st.download_button(
+                        "CSV",
+                        rows.to_csv(index=False).encode("utf-8"),
+                        file_name="result.csv",
+                        mime="text/csv",
+                        key=f"download_{index}",
+                        icon=":material/download:",
+                    )
+
+                    st.button(
+                        "Saved" if message.get("approved") else "Correct",
+                        icon=":material/check:" if message.get("approved") else ":material/thumb_up:",
+                        key=f"approve_{index}",
+                        on_click=approve_message,
+                        args=(index,),
+                        disabled=bool(message.get("approved")) or bool(message.get("feedback")),
+                        help=(
+                            "Save this question and SQL as a verified example "
+                            "for future similar questions."
+                        ),
+                    )
+
+                if can_rate:
+
+                    render_wrong_button(message, index)
 
         details = []
 
