@@ -825,3 +825,60 @@ class TestEdgeCases:
         assert grid(harness)["ünï col"].tolist() == ["x", "y"]
         names = [name for _, name, _, _ in harness.at.session_state["_export"]["files"]]
         assert names == ["my_table.csv", "my_table.json", "my_table.xlsx"]
+
+
+class TestColumnProfile:
+
+    def profile(self, ui, table, column):
+        open_table(ui, table)
+        next(s for s in ui.at.selectbox if s.key == "profile_column").set_value(column).run()
+        next(b for b in ui.at.button if b.key == "profile_run").click().run()
+        assert not ui.at.exception, ui.at.exception
+
+    def markdown(self, ui):
+        return " ".join(m.value for m in ui.at.markdown)
+
+    def metrics(self, ui):
+        return {m.label: m.value for m in ui.at.metric}
+
+    def test_nothing_runs_until_asked(self, ui):
+        open_table(ui, "main.orders")
+
+        assert events(audit_file(), "profile") == []
+        assert not ui.at.metric
+
+    def test_text_column_shows_counts_and_common_values(self, ui):
+        self.profile(ui, "main.orders", "status")
+
+        shown = self.metrics(ui)
+        assert shown["Rows"] == "125" and shown["Distinct"] == "3"
+        assert "`CANCELLED` to `SHIPPED`" in self.markdown(ui)
+        assert shown["Nulls"] == "0 (0.0%)"
+        common = next(d for d in ui.at.dataframe if "Common value" in d.value.columns)
+        assert set(common.value["Common value"]) == {"OPEN", "SHIPPED", "CANCELLED"}
+
+    def test_nulls_are_counted(self, ui):
+        self.profile(ui, "main.customer", "email")
+
+        shown = self.metrics(ui)
+        assert shown["Nulls"] == "1 (33.3%)" and shown["Distinct"] == "2"
+
+    def test_numeric_column_gets_a_range_and_a_chart(self, ui):
+        self.profile(ui, "main.orders", "total")
+
+        shown = self.metrics(ui)
+        assert "`10.0` to `1250.0`" in self.markdown(ui)
+        assert ui.at.get("arrow_vega_lite_chart") or ui.at.get("vega_lite_chart")
+
+    def test_profiling_is_audited_and_goes_through_the_guard(self, ui):
+        self.profile(ui, "main.orders", "status")
+
+        event = events(audit_file(), "profile")[0]
+        assert event["table"] == "main.orders" and event["column"] == "status"
+        assert "errors" not in event
+
+    def test_hidden_columns_cannot_be_profiled(self, ui):
+        open_table(ui, "main.customer")
+
+        options = next(s for s in ui.at.selectbox if s.key == "profile_column").options
+        assert "password" not in options

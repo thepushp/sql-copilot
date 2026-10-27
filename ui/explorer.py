@@ -4,6 +4,7 @@ A table page has four sections (Properties, Data, Diagram, SQL). Only the
 active section does any work, so opening a table never runs a query by itself.
 """
 
+import pandas as pd
 import streamlit as st
 
 from database.query_executor import execute_query
@@ -11,6 +12,16 @@ from database.sql_guard import validate_sql
 from services.audit import audit
 from services.charting import chartable_columns
 from ui.results import render_chart
+from services.column_profile import (
+    SAMPLE_ROWS,
+    SPREAD_ROWS,
+    TOP_VALUES,
+    is_sampled,
+    kind_of,
+    profile_queries,
+    spread_frame,
+    summarize,
+)
 from services.data_profile import profile
 from services.er_diagram import (
     MAX_TABLES,
@@ -168,7 +179,190 @@ def render_navigator(metadata, index):
 
 # --------------------------------------------------------------- properties
 
-def render_properties(table, key, index):
+def _profile_chart(profile_data, column, kind):
+
+    import altair as alt
+
+    if kind in ("numeric", "temporal"):
+
+        frame = spread_frame(profile_data.get("spread"), kind)
+
+        if frame.empty:
+            return None
+
+        if kind == "numeric":
+            x = alt.X("value:Q", bin=alt.Bin(maxbins=30), title=column.name)
+        else:
+            x = alt.X("value:T", timeUnit="yearmonth", title=column.name)
+
+        return alt.Chart(frame).mark_bar().encode(
+            x=x, y=alt.Y("count()", title="rows"), tooltip=[alt.Tooltip("count()", title="rows")]
+        )
+
+    top = profile_data.get("top")
+
+    if top is None or top.empty:
+        return None
+
+    top = top.assign(value=top["value"].astype(str))
+
+    return alt.Chart(top).mark_bar().encode(
+        y=alt.Y("value:N", sort="-x", title=column.name),
+        x=alt.X("occurrences:Q", title="rows"),
+        tooltip=["value", "occurrences"],
+    )
+
+
+def _run_profile(settings, table, column):
+    """Run the profile queries through the safety check. Returns (data, errors)."""
+
+    sampled = is_sampled(table)
+    queries = profile_queries(table, column, settings.dialect_key, sampled)
+
+    data = {"sampled": sampled}
+    errors = []
+
+    for name, sql in queries.items():
+
+        result, error = _checked_run(
+            settings, sql, SPREAD_ROWS if name == "spread" else TOP_VALUES + 1
+        )
+
+        if error:
+            errors.append(f"{name}: {error}")
+            continue
+
+        data[name] = result.rows
+
+    audit(
+        "profile",
+        datasource=settings.datasource_name,
+        table=f"{table.schema}.{table.name}",
+        column=column.name,
+        sampled=sampled,
+        errors=errors or None,
+    )
+
+    return data, errors
+
+
+def render_column_profile(settings, table, key):
+
+    columns = displayable_columns(table)
+
+    if not columns:
+        return
+
+    st.markdown("**Profile a column**")
+
+    with st.container(horizontal=True, vertical_alignment="bottom", wrap=True):
+
+        name = st.selectbox(
+            "Column",
+            [c.name for c in columns],
+            key="profile_column",
+            label_visibility="collapsed",
+            width=240,
+        )
+
+        clicked = st.button(
+            "Profile",
+            icon=":material/analytics:",
+            key="profile_run",
+            help="Reads the column to count nulls, distinct values, range and common values.",
+        )
+
+    column = next(c for c in columns if c.name == name)
+
+    cache = st.session_state.setdefault("_profiles", {})
+    cache_key = (settings.datasource_name, key, name)
+
+    if clicked:
+
+        with st.spinner("Profiling..."):
+            cache[cache_key] = _run_profile(settings, table, column)
+
+    if cache_key not in cache:
+
+        if is_sampled(table):
+            st.caption(
+                f"Large table: profiling uses its first {SAMPLE_ROWS:,} rows."
+            )
+
+        return
+
+    data, errors = cache[cache_key]
+
+    for text in errors:
+        st.warning(text)
+
+    summary = summarize(data.get("stats"))
+
+    if not summary:
+        return
+
+    if data.get("sampled"):
+        st.caption(f"Based on the first {SAMPLE_ROWS:,} rows of a large table.")
+
+    def show(value):
+
+        return "" if value is None or pd.isna(value) else str(value)[:60]
+
+    cells = st.columns(3)
+
+    cells[0].metric("Rows", f"{summary['rows']:,}")
+    cells[1].metric("Nulls", f"{summary['nulls']:,} ({summary['null_share']:.1%})")
+    cells[2].metric("Distinct", "n/a" if summary["distinct"] is None else f"{summary['distinct']:,}")
+
+    if show(summary["min"]) or show(summary["max"]):
+
+        st.markdown(f"**Range:** `{show(summary['min'])}` to `{show(summary['max'])}`")
+
+    chart = _profile_chart(data, column, kind_of(column))
+
+    left, right = st.columns([1, 1]) if chart is not None else (None, st.container())
+
+    if chart is not None:
+
+        with left:
+            st.altair_chart(chart, width="stretch")
+
+    top = data.get("top")
+
+    present = summary["rows"] - summary["nulls"]
+
+    if summary["distinct"] is not None and present and summary["distinct"] == present:
+
+        with right:
+            st.caption("Every value is unique.")
+
+    elif (
+        top is not None
+        and not top.empty
+        and (kind_of(column) == "other" or (summary["distinct"] or 0) <= TOP_VALUES * 3)
+    ):
+
+        with right:
+
+            share = top["occurrences"] / max(summary["rows"] - summary["nulls"], 1)
+
+            st.dataframe(
+                display_safe(
+                    top.assign(share=share).rename(
+                        columns={"value": "Common value", "occurrences": "Rows", "share": "Share"}
+                    )
+                ),
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "Share": st.column_config.NumberColumn(format="percent"),
+                    "Rows": st.column_config.NumberColumn(format="localized"),
+                },
+            )
+
+
+
+def render_properties(settings, table, key, index):
 
     targets = column_targets(table, index)
 
@@ -189,6 +383,8 @@ def render_properties(table, key, index):
         hide_index=True,
         width="stretch",
     )
+
+    render_column_profile(settings, table, key)
 
     references = outgoing(table, index)
     referenced_by = incoming(key, index)
@@ -612,7 +808,7 @@ def render_table_page(settings, index):
     elif section == "SQL":
         render_sql(settings, table, key, index)
     else:
-        render_properties(table, key, index)
+        render_properties(settings, table, key, index)
 
 
 def render_explorer(settings):
