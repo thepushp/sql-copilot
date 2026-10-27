@@ -51,6 +51,7 @@ from ui.common import (
     show_html,
 )
 from ui.history import render_history
+from ui.progress import Progress
 from ui.share import (
     decode as decode_link,
     encode as encode_link,
@@ -1622,6 +1623,7 @@ def _answer_question(question, history, settings, status):
             glossary=glossary,
             dialect_key=settings.dialect_key,
             previous_sql=previous_sql if history else "",
+            on_token=getattr(status, "stream", None),
         )
 
         add_usage(response)
@@ -1681,6 +1683,7 @@ def _answer_question(question, history, settings, status):
                     examples=examples,
                     glossary=glossary,
                     dialect_key=settings.dialect_key,
+                    on_token=getattr(status, "stream", None),
                 )
 
                 add_usage(repaired)
@@ -2345,20 +2348,23 @@ def render_chat_view(settings):
 
         with st.chat_message("assistant"):
 
-            with st.status("Working...", expanded=False) as status:
+            with st.status("Working...", expanded=True) as status:
+
+                progress = Progress(status)
 
                 reply = answer_question(
                     question,
                     history,
                     settings,
-                    status,
+                    progress,
                 )
 
                 failed = bool(reply.get("error"))
 
-                status.update(
+                progress.update(
                     label="Failed" if failed else "Done",
                     state="error" if failed else "complete",
+                    expanded=False,
                 )
 
         st.session_state.messages.append(reply)

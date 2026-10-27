@@ -160,6 +160,22 @@ class ScriptedLLM:
             usage_metadata={"input_tokens": 100, "output_tokens": 10},
         )
 
+    def stream(self, messages):
+
+        from langchain_core.messages import AIMessageChunk
+
+        reply = self.invoke(messages)
+        half = len(reply.content) // 2
+
+        yield AIMessageChunk(
+            content=reply.content[:half],
+            usage_metadata={"input_tokens": 100, "output_tokens": 0, "total_tokens": 100},
+        )
+        yield AIMessageChunk(
+            content=reply.content[half:],
+            usage_metadata={"input_tokens": 0, "output_tokens": 10, "total_tokens": 10},
+        )
+
 
 @pytest.fixture
 def scripted_llm():

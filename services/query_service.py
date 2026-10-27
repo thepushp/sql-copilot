@@ -84,6 +84,33 @@ def _usage(response) -> tuple[int, int]:
     )
 
 
+def _call(llm, messages, on_token=None):
+    """Invoke the model, streaming partial text to `on_token` when possible."""
+
+    if on_token is None or not hasattr(llm, "stream"):
+        return llm.invoke(messages)
+
+    merged = None
+    text = ""
+
+    try:
+        for chunk in llm.stream(messages):
+            merged = chunk if merged is None else merged + chunk
+            piece = _content_to_text(chunk.content)
+            if piece:
+                text += piece
+                on_token(text)
+    except Exception:
+        if merged is not None:
+            raise
+        return llm.invoke(messages)
+
+    if merged is None:
+        return llm.invoke(messages)
+
+    return merged
+
+
 def clean_sql(raw: str) -> str:
 
     text = re.sub(
@@ -121,6 +148,7 @@ def _generate(
     glossary="",
     dialect_key="postgresql",
     previous_sql="",
+    on_token=None,
 ) -> QueryResponse:
 
     dialect = get_dialect(dialect_key)
@@ -141,7 +169,7 @@ def _generate(
         }
     )
 
-    response = llm.invoke(messages)
+    response = _call(llm, messages, on_token)
 
     sql = clean_sql(_content_to_text(response.content))
 
@@ -177,11 +205,12 @@ def process_question(
     glossary: str = "",
     dialect_key: str = "postgresql",
     previous_sql: str = "",
+    on_token=None,
 ) -> QueryResponse:
 
     return _generate(
         llm, question, context, history, examples, glossary, dialect_key,
-        previous_sql,
+        previous_sql, on_token,
     )
 
 
@@ -195,6 +224,7 @@ def _retry(
     examples,
     glossary,
     dialect_key,
+    on_token=None,
 ) -> QueryResponse:
 
     turns = list(history or [])
@@ -203,7 +233,8 @@ def _retry(
     turns.append(("ai", failed_sql))
 
     return _generate(
-        llm, feedback, context, turns, examples, glossary, dialect_key
+        llm, feedback, context, turns, examples, glossary, dialect_key,
+        on_token=on_token,
     )
 
 
@@ -217,6 +248,7 @@ def repair_question(
     examples: str = "",
     glossary: str = "",
     dialect_key: str = "postgresql",
+    on_token=None,
 ) -> QueryResponse:
 
     feedback = (
@@ -228,7 +260,7 @@ def repair_question(
 
     return _retry(
         llm, question, context, history, failed_sql, feedback,
-        examples, glossary, dialect_key,
+        examples, glossary, dialect_key, on_token,
     )
 
 
@@ -242,6 +274,7 @@ def refine_question(
     examples: str = "",
     glossary: str = "",
     dialect_key: str = "postgresql",
+    on_token=None,
 ) -> QueryResponse:
     """Ask for a better query when one ran but returned no rows."""
 
@@ -257,7 +290,7 @@ def refine_question(
 
     return _retry(
         llm, question, context, history, sql, feedback,
-        examples, glossary, dialect_key,
+        examples, glossary, dialect_key, on_token,
     )
 
 
