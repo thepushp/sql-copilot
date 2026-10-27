@@ -35,7 +35,6 @@ from rag.retriever import (
 from rag.schema_indexer import build_schema_index
 
 from services.audit import audit, configure_logging, get_logger
-from services.charting import chart_data
 from services.exports import display_safe
 from services.glossary import expand_query, load_glossary, save_glossary
 from services.table_selector import select_tables
@@ -52,6 +51,7 @@ from ui.common import (
 )
 from ui.history import render_history
 from ui.progress import Progress
+from ui.results import render_result
 from ui.share import (
     decode as decode_link,
     encode as encode_link,
@@ -1193,41 +1193,6 @@ def ask_followup(text):
     st.session_state.pending_question = text
 
 
-def render_result(rows):
-
-    if rows.empty:
-
-        st.info("The query returned no rows.")
-
-        return
-
-    chart = chart_data(rows)
-
-    if chart is None:
-
-        st.dataframe(display_safe(rows), width="stretch", hide_index=True)
-
-        return
-
-    kind, frame = chart
-
-    table_tab, chart_tab = st.tabs(["Table", "Chart"])
-
-    with table_tab:
-
-        st.dataframe(display_safe(rows), width="stretch", hide_index=True)
-
-    with chart_tab:
-
-        if kind == "line":
-
-            st.line_chart(frame)
-
-        else:
-
-            st.bar_chart(frame)
-
-
 def open_er_from_chat(key):
 
     if key:
@@ -1302,7 +1267,7 @@ def render_message(message, index, followups=False):
 
         if rows is not None:
 
-            render_result(rows)
+            render_result(rows, key=f"result_{index}")
 
         if message.get("sql"):
 

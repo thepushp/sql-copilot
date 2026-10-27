@@ -9,7 +9,8 @@ import streamlit as st
 from database.query_executor import execute_query
 from database.sql_guard import validate_sql
 from services.audit import audit
-from services.charting import CHART_AGGREGATES, CHART_KINDS, chartable_columns, make_chart
+from services.charting import chartable_columns
+from ui.results import render_chart
 from services.data_profile import profile
 from services.er_diagram import (
     MAX_TABLES,
@@ -411,33 +412,11 @@ def render_data(settings, table, key):
 
 def _render_chart(frame):
 
-    everything, numeric = chartable_columns(frame)
-
-    if not numeric:
+    if not chartable_columns(frame)[1]:
         return
 
     with st.expander("Chart this page"):
-
-        kind = st.segmented_control("Type", CHART_KINDS, default=CHART_KINDS[0], key="chart_kind") or CHART_KINDS[0]
-
-        with st.container(horizontal=True, vertical_alignment="bottom", wrap=True):
-
-            x = st.selectbox("X axis" if kind != "Histogram" else "Column", everything, key="chart_x", width=180)
-
-            if kind != "Histogram":
-                y = st.selectbox("Y axis", numeric, key="chart_y", width=180)
-                aggregate = st.selectbox("Combine rows", CHART_AGGREGATES, key="chart_agg", width=140)
-                color = st.selectbox("Split by", ["(none)"] + everything, key="chart_color", width=180)
-            else:
-                y, aggregate, color = x, "None", "(none)"
-
-        try:
-            chart = make_chart(frame, x, y, kind, aggregate, None if color == "(none)" else color)
-        except ValueError as exc:
-            st.caption(str(exc))
-            return
-
-        st.altair_chart(chart, width="stretch")
+        render_chart(frame, "chart")
 
 
 def _count_key(settings, key):
