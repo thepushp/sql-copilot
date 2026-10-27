@@ -12,11 +12,19 @@
     <div id="lines" hidden></div>
   </div>
   <div id="summary"></div>
+  <div class="search">
+    <input id="search" type="search" placeholder="Find table ( / )" aria-label="Find table" autocomplete="off">
+    <span id="search-count"></span>
+  </div>
   <div class="tools">
     <button id="zoom-out" title="Zoom out">&minus;</button>
     <button id="zoom-in" title="Zoom in">+</button>
     <button id="fit" title="Fit to width">Fit</button>
     <button id="clear" title="Clear selection (Esc)">Clear</button>
+  </div>
+  <div class="export" id="legend">
+    <button id="legend-button" aria-expanded="false" title="What the symbols mean">Legend</button>
+    <div id="legend-body" class="menu" hidden></div>
   </div>
   <div class="export">
     <button id="export-button" aria-haspopup="true" aria-expanded="false" title="Download this diagram">Export &#9662;</button>

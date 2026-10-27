@@ -28,6 +28,11 @@
     margin: 28,
   };
 
+  var SCHEMA_COLORS = [
+    "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+    "#ec4899", "#14b8a6", "#84cc16",
+  ];
+
   /* ---------------------------------------------------------------- model */
 
   function truncate(text, max) {
@@ -76,10 +81,19 @@
       });
     });
 
+    var schemas = [];
+    tables.forEach(function (table) {
+      if (schemas.indexOf(table.schema) < 0) {
+        schemas.push(table.schema);
+      }
+    });
+    schemas.sort();
+
     return {
       tables: tables,
       edges: edges,
       byId: byId,
+      schemas: schemas,
       focus: data.focus,
       showSchema: !!data.showSchema,
     };
@@ -469,6 +483,23 @@
     }, parent);
   }
 
+  function schemaColor(model, schema) {
+    return SCHEMA_COLORS[model.schemas.indexOf(schema) % SCHEMA_COLORS.length];
+  }
+
+  function matchingTables(model, query) {
+    var words = String(query).toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      return [];
+    }
+    return model.tables.filter(function (table) {
+      var text = (table.schema + "." + table.name).toLowerCase();
+      return words.every(function (word) {
+        return text.indexOf(word) >= 0;
+      });
+    });
+  }
+
   function render(model, svg, size, handlers) {
     while (svg.firstChild) {
       svg.removeChild(svg.firstChild);
@@ -503,6 +534,14 @@
       el("rect", { "class": "frame", width: table.w, height: table.h, rx: 6 }, g);
       var head = el("g", { "class": "head" }, g);
       el("rect", { "class": "head-bg", width: table.w, height: CFG.headerH, rx: 6 }, head);
+      if (model.showSchema) {
+        el("rect", {
+          "class": "schema-stripe",
+          width: 5,
+          height: CFG.headerH,
+          fill: schemaColor(model, table.schema),
+        }, head);
+      }
       el("text", { "class": "title", x: CFG.padX, y: CFG.headerH / 2 + 4 }, head, table.title);
       el("title", {}, head, table.schema + "." + table.name);
       head.addEventListener("click", function (event) {
@@ -678,6 +717,61 @@
     });
   }
 
+  function initLegend(model) {
+    var box = document.getElementById("legend");
+    var button = document.getElementById("legend-button");
+    var body = document.getElementById("legend-body");
+
+    function row(parent, swatch, text) {
+      var line = document.createElement("div");
+      line.className = "legend-row";
+      line.appendChild(swatch);
+      var label = document.createElement("span");
+      label.textContent = text;
+      line.appendChild(label);
+      parent.appendChild(line);
+    }
+
+    function lineSwatch(dashed) {
+      var s = document.createElement("span");
+      s.className = "sw-line" + (dashed ? " dashed" : "");
+      return s;
+    }
+
+    function textSwatch(cls, text) {
+      var s = document.createElement("span");
+      s.className = "sw-text " + cls;
+      s.textContent = text;
+      return s;
+    }
+
+    row(body, lineSwatch(false), "Declared foreign key");
+    row(body, lineSwatch(true), "Inferred relationship (guessed from names)");
+    row(body, textSwatch("pk", "PK"), "Primary key");
+    row(body, textSwatch("fk", "FK"), "Foreign key column");
+    if (model.showSchema) {
+      model.schemas.forEach(function (schema) {
+        var s = document.createElement("span");
+        s.className = "sw-block";
+        s.style.background = schemaColor(model, schema);
+        row(body, s, "Schema " + schema);
+      });
+    }
+
+    button.addEventListener("click", function (event) {
+      event.stopPropagation();
+      body.hidden = !body.hidden;
+      button.setAttribute("aria-expanded", body.hidden ? "false" : "true");
+    });
+    box.addEventListener("click", function (event) {
+      event.stopPropagation();
+    });
+    document.addEventListener("click", function () {
+      body.hidden = true;
+      button.setAttribute("aria-expanded", "false");
+    });
+  }
+
   function init() {
     var data = JSON.parse(document.getElementById("er-data").textContent);
     if (data.theme === "dark" || data.theme === "light") {
@@ -800,6 +894,55 @@
     });
     document.getElementById("fit").addEventListener("click", fit);
 
+    // Search: dims tables that do not match while typing; Enter selects and
+    // centres the first match.
+    var search = document.getElementById("search");
+    var searchCount = document.getElementById("search-count");
+
+    function markMatches() {
+      var matches = matchingTables(model, search.value);
+      var active = search.value.trim() !== "";
+      var hits = new Set(matches.map(function (t) { return t.index; }));
+      svg.classList.toggle("searching", active);
+      refs.tables.forEach(function (g, i) {
+        g.classList.toggle("match", active && hits.has(i));
+      });
+      searchCount.textContent = active ? matches.length + " found" : "";
+      return matches;
+    }
+
+    function centerOn(table) {
+      stage.scrollLeft = Math.max(
+        0, (table.x + table.w / 2) * state.scale - stage.clientWidth / 2);
+      stage.scrollTop = Math.max(
+        0, (table.y + table.h / 2) * state.scale - stage.clientHeight / 2);
+    }
+
+    search.addEventListener("input", markMatches);
+    search.addEventListener("keydown", function (event) {
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        search.value = "";
+        markMatches();
+        search.blur();
+      } else if (event.key === "Enter") {
+        var matches = markMatches();
+        if (matches.length) {
+          state.key = "t:" + matches[0].id;
+          show(selectTable(model, matches[0].id));
+          centerOn(matches[0]);
+        }
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "/" && document.activeElement !== search) {
+        event.preventDefault();
+        search.focus();
+      }
+    });
+
+    initLegend(model);
+
     // Start readable: a very wide diagram scrolls sideways instead of shrinking
     // its text to nothing. "Fit" gives the overview.
     setScale(Math.max(MIN_START_SCALE, fitScale()));
@@ -821,6 +964,7 @@
     selectEdge: selectEdge,
     selectTable: selectTable,
     describeEdge: describeEdge,
+    matchingTables: matchingTables,
     truncate: truncate,
   };
 

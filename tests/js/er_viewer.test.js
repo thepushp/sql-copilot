@@ -253,3 +253,23 @@ test("truncate keeps short text and shortens long text with an ellipsis", () => 
   assert.equal(er.truncate("a_very_long_column_name", 10), "a_very_lo…");
   assert.equal(er.truncate("a_very_long_column_name", 10).length, 10);
 });
+
+test("matchingTables requires every word and ignores case", () => {
+  const model = er.buildModel({
+    tables: [table("public.Orders", [col("id")]), table("sales.order_item", [col("id")]), table("public.customer", [col("id")])],
+    edges: [],
+  });
+  const names = (q) => er.matchingTables(model, q).map((t) => t.id);
+  assert.deepEqual(names("order"), ["public.Orders", "sales.order_item"]);
+  assert.deepEqual(names("sales item"), ["sales.order_item"]);
+  assert.deepEqual(names("   "), []);
+  assert.deepEqual(names("nothing"), []);
+});
+
+test("buildModel lists schemas sorted", () => {
+  const model = er.buildModel({
+    tables: [table("sales.a", [col("id")]), table("public.b", [col("id")])],
+    edges: [],
+  });
+  assert.deepEqual(model.schemas, ["public", "sales"]);
+});
