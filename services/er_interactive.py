@@ -106,9 +106,15 @@ def graph_data(
 
 
 @lru_cache(maxsize=None)
-def _asset(name):
+def _read_asset(name, modified):
 
     return (ASSETS / name).read_text(encoding="utf-8")
+
+
+def _asset(name):
+    """Asset text, re-read whenever the file changes (no restart while editing)."""
+
+    return _read_asset(name, (ASSETS / name).stat().st_mtime_ns)
 
 
 def _json_for_html(data):
