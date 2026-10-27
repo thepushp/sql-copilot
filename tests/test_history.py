@@ -111,3 +111,15 @@ class TestHistoryUI:
         item = history.HistoryItem("Shop", "q", "DELETE FROM customer")
 
         assert "Only SELECT" in rerun_sql(item, None, "sqlite", AccessPolicy())
+
+
+def test_one_line_truncates():
+    from ui.history import one_line
+
+    assert one_line("short  text") == "short text"
+
+    long = one_line("word " * 40)
+
+    assert len(long) <= 34
+    assert long.endswith("…")
+    assert "\n" not in one_line("a\nb")

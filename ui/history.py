@@ -10,6 +10,19 @@ from ui.common import NAV_CHAT
 
 
 MAX_SHOWN = 30
+LIST_HEIGHT = 260
+LABEL_CHARS = 34
+
+
+def one_line(text, limit=LABEL_CHARS):
+    """Single-line label; long text ends with an ellipsis."""
+
+    flat = " ".join(text.split())
+
+    if len(flat) <= limit:
+        return flat
+
+    return flat[: limit - 1].rstrip() + "\u2026"
 
 
 def _pins():
@@ -122,45 +135,11 @@ def render_history(datasource_name, config, dialect_key):
         if error:
             st.error(error)
 
-        for position, item in enumerate(items[:MAX_SHOWN]):
+        with st.container(height=LIST_HEIGHT, border=False):
 
-            st.markdown(
-                f"{':pushpin: ' if item.pinned else ''}{item.question}",
-            )
+            for position, item in enumerate(items[:MAX_SHOWN]):
 
-            with st.container(horizontal=True):
-
-                st.button(
-                    "Unpin" if item.pinned else "Pin",
-                    key=f"hist_pin_{position}",
-                    on_click=_toggle,
-                    args=(item,),
-                )
-
-                st.button(
-                    "Ask again",
-                    key=f"hist_ask_{position}",
-                    on_click=_ask_again,
-                    args=(item,),
-                )
-
-                if item.sql and st.button(
-                    "Re-run SQL",
-                    key=f"hist_run_{position}",
-                    help="Runs the stored SQL again through the safety guard.",
-                ):
-
-                    error = rerun_sql(
-                        item,
-                        config,
-                        dialect_key,
-                        st.session_state.access_policy,
-                    )
-
-                    if error:
-                        st.session_state.history_error = error
-
-                    st.rerun()
+                _render_item(position, item, config, dialect_key)
 
         st.caption("Exports contain questions and SQL only, never results.")
 
@@ -181,3 +160,50 @@ def render_history(datasource_name, config, dialect_key):
                 mime="text/csv",
                 key="hist_csv",
             )
+
+
+def _render_item(position, item, config, dialect_key):
+    """One collapsed row; the full question and the actions open in a popover."""
+
+    label = one_line(item.question)
+
+    if item.pinned:
+        label = f":material/push_pin: {label}"
+
+    with st.popover(label, width="stretch"):
+
+        st.caption(item.question)
+
+        with st.container(horizontal=True):
+
+            st.button(
+                "Unpin" if item.pinned else "Pin",
+                key=f"hist_pin_{position}",
+                on_click=_toggle,
+                args=(item,),
+            )
+
+            st.button(
+                "Ask again",
+                key=f"hist_ask_{position}",
+                on_click=_ask_again,
+                args=(item,),
+            )
+
+            if item.sql and st.button(
+                "Re-run SQL",
+                key=f"hist_run_{position}",
+                help="Runs the stored SQL again through the safety guard.",
+            ):
+
+                error = rerun_sql(
+                    item,
+                    config,
+                    dialect_key,
+                    st.session_state.access_policy,
+                )
+
+                if error:
+                    st.session_state.history_error = error
+
+                st.rerun()
