@@ -50,6 +50,7 @@ from ui.common import (
     current_theme as _theme,
     show_html,
 )
+from ui.history import render_history
 from ui.explorer import open_in_er_diagram, render_explorer
 from services.er_diagram import (
     COLUMN_MODES,
@@ -988,6 +989,12 @@ def render_sidebar():
         with st.expander("Model & provider", expanded=False):
 
             model_settings = render_model_settings()
+
+        render_history(
+            datasource_name,
+            datasource_config,
+            get_dialect(datasource_config).key,
+        )
 
         with st.expander("Business glossary", expanded=False):
 
