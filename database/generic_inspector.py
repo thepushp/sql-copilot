@@ -7,6 +7,7 @@ from database.connection_manager import get_engine
 from database.dialects import get_dialect
 from database.schema_metadata import (
     ColumnMetadata,
+    ConstraintMetadata,
     DatabaseMetadata,
     ForeignKeyMetadata,
     IndexMetadata,
@@ -106,6 +107,18 @@ def inspect_generic(
             kind=ObjectKind.ANY,
         )
 
+        uniques = _safe(
+            inspector.get_multi_unique_constraints,
+            schema=schema,
+            kind=ObjectKind.ANY,
+        )
+
+        checks = _safe(
+            inspector.get_multi_check_constraints,
+            schema=schema,
+            kind=ObjectKind.ANY,
+        )
+
         comments = _safe(
             inspector.get_multi_table_comment,
             schema=schema,
@@ -189,6 +202,37 @@ def inspect_generic(
                         method="",
                     )
                 )
+
+            for unique in uniques.get(key) or []:
+
+                columns_text = ", ".join(unique.get("column_names") or [])
+
+                table.constraints.append(
+                    ConstraintMetadata(
+                        name=unique.get("name") or "unnamed",
+                        kind="unique",
+                        definition=f"UNIQUE ({columns_text})",
+                        columns=list(unique.get("column_names") or []),
+                    )
+                )
+
+            for check in checks.get(key) or []:
+
+                table.constraints.append(
+                    ConstraintMetadata(
+                        name=check.get("name") or "unnamed",
+                        kind="check",
+                        definition=f"CHECK ({check.get('sqltext')})",
+                    )
+                )
+
+            if table.kind == "view":
+
+                definition = _safe(
+                    inspector.get_view_definition, table_name, schema=schema
+                )
+
+                table.definition = definition if isinstance(definition, str) else None
 
             schema_metadata.tables.append(table)
 

@@ -1,4 +1,5 @@
 import copy
+import re
 import fnmatch
 from dataclasses import dataclass, field
 
@@ -55,6 +56,37 @@ def _column_blocked(name, patterns):
         fnmatch.fnmatch(lowered, pattern.lower())
         for pattern in patterns
     )
+
+
+def _withhold_revealing_details(metadata, policy):
+    """Drop view definitions and constraints that name hidden columns or excluded tables."""
+
+    names = {name for name in policy.blocked_columns} | {
+        qualified.split(".")[-1] for qualified in policy.blocked_tables
+    }
+
+    if not names:
+
+        return
+
+    pattern = re.compile(
+        r"\b(?:" + "|".join(re.escape(name) for name in sorted(names)) + r")\b",
+        re.IGNORECASE,
+    )
+
+    for schema in metadata.schemas:
+
+        for table in schema.tables:
+
+            if table.definition and pattern.search(table.definition):
+
+                table.definition = None
+
+            table.constraints = [
+                constraint
+                for constraint in table.constraints
+                if not pattern.search(constraint.definition or "")
+            ]
 
 
 def apply_privacy(
@@ -157,5 +189,7 @@ def apply_privacy(
                     and not _column_blocked(fk.foreign_column, patterns)
                 )
             ]
+
+    _withhold_revealing_details(filtered, policy)
 
     return filtered, policy

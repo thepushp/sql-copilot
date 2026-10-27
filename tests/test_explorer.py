@@ -21,10 +21,10 @@ def explorer_db(tmp_path_factory):
     con.executescript(
         """
         CREATE TABLE customer(
-            id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT);
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE, password TEXT);
         CREATE TABLE orders(
             id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customer(id),
-            status TEXT, total REAL);
+            status TEXT, total REAL CHECK (total >= 0));
         CREATE TABLE item(order_id INTEGER REFERENCES orders(id), sku TEXT, qty INTEGER);
         CREATE TABLE secret_notes(id INTEGER PRIMARY KEY, note TEXT);
         CREATE INDEX idx_orders_customer ON orders(customer_id);
@@ -236,7 +236,7 @@ class TestProperties:
     def test_indexes_are_listed(self, ui):
         open_table(ui, "main.orders")
 
-        indexes = ui.at.dataframe[-1].value
+        indexes = next(d.value for d in ui.at.dataframe if "Method" in d.value.columns)
 
         assert indexes["Name"].tolist() == ["idx_orders_customer"]
         assert indexes["Columns"].tolist() == ["customer_id"]
@@ -882,3 +882,198 @@ class TestColumnProfile:
 
         options = next(s for s in ui.at.selectbox if s.key == "profile_column").options
         assert "password" not in options
+
+
+class TestStarredAndRecent:
+
+    def lists(self, ui, choice):
+        ui.seg("explorer_list").set_value(choice).run()
+        assert not ui.at.exception, ui.at.exception
+        return [b.key for b in ui.at.main.button if b.key.startswith("nav_")]
+
+    def test_starring_adds_to_the_starred_list(self, ui):
+        open_table(ui, "main.item")
+        ui.button(key="fav_toggle", sidebar=False).click().run()
+
+        assert ui.at.session_state.explorer_favorites == ["main.item"]
+        assert self.lists(ui, "Starred") == ["nav_main.item"]
+
+    def test_unstarring_removes_it(self, ui):
+        open_table(ui, "main.item")
+        ui.button(key="fav_toggle", sidebar=False).click().run()
+        ui.button(key="fav_toggle", sidebar=False).click().run()
+
+        assert ui.at.session_state.explorer_favorites == []
+        assert self.lists(ui, "Starred") == []
+
+    def test_recent_tables_are_most_recent_first(self, ui):
+        for key in ("main.item", "main.orders", "main.customer", "main.orders"):
+            open_table(ui, key)
+
+        assert self.lists(ui, "Recent")[:3] == ["nav_main.orders", "nav_main.customer", "nav_main.item"]
+
+    def test_recent_list_is_capped(self, ui):
+        ui.at.session_state.explorer_recent = [f"main.fake{i}" for i in range(20)]
+        open_table(ui, "main.item")
+
+        assert len(ui.at.session_state.explorer_recent) <= 8
+
+
+class TestRowDetail:
+
+    def select_row(self, ui, number):
+        sql = ui.at.session_state["_data_cache"]["sql"]
+        from ui.explorer import grid_key
+
+        ui.at.session_state[grid_key(sql, "Shop")] = {"selection": {"rows": [number], "columns": []}}
+        ui.at.run()
+        assert not ui.at.exception, ui.at.exception
+
+    def test_selecting_a_row_shows_it_in_full(self, ui):
+        open_table(ui, "main.customer")
+        section(ui, "Data")
+        self.select_row(ui, 0)
+
+        detail = next(d for d in ui.at.dataframe if list(d.value.columns) == ["Column", "Value"])
+        assert detail.value.set_index("Column").loc["name", "Value"] == "Ann"
+
+    def test_foreign_key_value_links_to_the_parent_row(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "Data")
+        self.select_row(ui, 0)
+
+        link = next(b for b in ui.at.main.button if b.label.startswith("Open customer where id ="))
+        link.click().run()
+        assert not ui.at.exception, ui.at.exception
+
+        assert selected(ui) == "main.customer"
+        assert ui.at.session_state.table_section == "Data"
+        assert ui.at.session_state.data_filter.startswith('"id" = ')
+        assert len(grid(ui)) == 1
+
+    def test_referenced_rows_link_to_the_children(self, ui):
+        open_table(ui, "main.customer")
+        section(ui, "Data")
+        self.select_row(ui, 0)
+
+        link = next(b for b in ui.at.main.button if b.label.startswith("Rows of orders where customer_id ="))
+        link.click().run()
+
+        assert selected(ui) == "main.orders"
+        assert 0 < len(grid(ui)) <= 50
+        assert set(grid(ui)["customer_id"]) == {1}
+
+    def test_no_selection_shows_a_hint(self, ui):
+        open_table(ui, "main.customer")
+        section(ui, "Data")
+
+        assert any("Select a row" in c.value for c in ui.at.caption)
+
+
+class TestColumnChooser:
+
+    def test_only_chosen_columns_are_read(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "Data")
+        next(m for m in ui.at.multiselect if m.key == "data_columns").set_value(["status", "total"]).run()
+
+        assert list(grid(ui).columns) == ["status", "total"]
+        assert "SELECT" in ui.at.session_state["_data_cache"]["sql"]
+        assert '"customer_id"' not in ui.at.session_state["_data_cache"]["sql"]
+
+    def test_choice_is_cleared_for_another_table(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "Data")
+        next(m for m in ui.at.multiselect if m.key == "data_columns").set_value(["status"]).run()
+
+        open_table(ui, "main.customer")
+        section(ui, "Data")
+
+        assert "name" in grid(ui).columns
+
+
+class TestPlansAndFreeQuery:
+
+    def test_plan_shows_without_running_the_query(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "Data")
+        before = len(events(audit_file(), "browse"))
+
+        ui.button(key="plan_data", sidebar=False).click().run()
+
+        assert not ui.at.exception, ui.at.exception
+        assert any("SCAN" in c.value.upper() or "SEARCH" in c.value.upper() for c in ui.at.code)
+        assert len(events(audit_file(), "plan")) == 1
+        assert len(events(audit_file(), "browse")) == before
+
+    def run_free(self, ui, sql):
+        open_table(ui, "main.orders")
+        section(ui, "SQL")
+        next(t for t in ui.at.text_area if t.key == "sql_free").set_value(sql).run()
+        ui.button(key="free_run", sidebar=False).click().run()
+        assert not ui.at.exception, ui.at.exception
+        return ui.at.session_state["sql_free_result"]
+
+    def test_a_select_runs(self, ui):
+        saved = self.run_free(ui, "SELECT status, COUNT(*) AS n FROM orders GROUP BY status ORDER BY status")
+
+        assert saved["error"] is None and saved["result"].row_count == 3
+        assert events(audit_file(), "query")[0]["rows"] == 3
+
+    def test_writes_are_refused(self, ui, explorer_db):
+        before = db_counts(explorer_db)
+
+        saved = self.run_free(ui, "DELETE FROM orders")
+
+        assert "Only SELECT" in saved["error"]
+        assert db_counts(explorer_db) == before
+
+    def test_excluded_and_hidden_data_stays_blocked(self, ui):
+        saved = self.run_free(ui, "SELECT password FROM customer")
+
+        assert saved["error"] and "password" in saved["error"].lower()
+
+    def test_garbage_is_reported_not_raised(self, ui):
+        saved = self.run_free(ui, "this is not sql")
+
+        assert saved["error"]
+
+    def test_generated_sql_can_be_copied_into_the_editor(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "SQL")
+        ui.button(key="free_template", sidebar=False).click().run()
+
+        assert "SELECT" in ui.at.session_state["sql_free"]
+
+    def test_the_plan_button_appears_for_a_select(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "SQL")
+        next(t for t in ui.at.text_area if t.key == "sql_free").set_value("SELECT id FROM orders").run()
+
+        assert [b for b in ui.at.main.button if b.key == "plan_free"]
+
+
+class TestPropertiesDetails:
+
+    def test_view_shows_its_definition(self, ui):
+        open_table(ui, "main.open_orders")
+
+        assert any("OPEN" in c.value for c in ui.at.code)
+        assert any(e.label == "Definition" for e in ui.at.main.expander)
+
+    def test_constraints_are_listed(self, ui):
+        open_table(ui, "main.orders")
+
+        assert any(m.value.startswith("**Constraints**") for m in ui.at.markdown)
+        rules = [d.value for d in ui.at.dataframe if "Rule" in d.value.columns]
+        assert any("total >= 0" in rule for frame in rules for rule in frame["Rule"])
+
+    def test_table_without_constraints_has_no_section(self, ui):
+        open_table(ui, "main.item")
+
+        assert not any(m.value.startswith("**Constraints**") for m in ui.at.markdown)
+
+    def test_plain_table_has_no_definition(self, ui):
+        open_table(ui, "main.orders")
+
+        assert not any(e.label == "Definition" for e in ui.at.main.expander)

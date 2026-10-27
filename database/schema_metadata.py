@@ -37,6 +37,14 @@ class IndexMetadata:
 
 
 @dataclass
+class ConstraintMetadata:
+    name: str
+    kind: str  # "unique" or "check"
+    definition: str
+    columns: list[str] = field(default_factory=list)
+
+
+@dataclass
 class TableMetadata:
     schema: str
     name: str
@@ -60,6 +68,11 @@ class TableMetadata:
     kind: str = "table"
     comment: str | None = None
     approx_rows: int | None = None
+
+    # Shown in the Explorer only; never sent to the model.
+    constraints: list[ConstraintMetadata] = field(default_factory=list)
+    definition: str | None = None
+    size_bytes: int | None = None
 
 
 @dataclass

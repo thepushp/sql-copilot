@@ -1,5 +1,7 @@
-from sqlalchemy import text
+import logging
 import os
+
+from sqlalchemy import text
 
 from config.datasource_config import DATASOURCES
 from database.connection_manager import get_connection
@@ -7,6 +9,7 @@ from database.dialects import get_dialect
 from database.generic_inspector import inspect_generic
 from database.schema_metadata import (
     ColumnMetadata,
+    ConstraintMetadata,
     DatabaseMetadata,
     ForeignKeyMetadata,
     IndexMetadata,
@@ -15,6 +18,8 @@ from database.schema_metadata import (
 )
 from flyway.flyway_inspector import build_flyway_object_state, inspect_flyway_directory
 
+
+logger = logging.getLogger("sql_copilot.inspector")
 
 RELKIND_NAMES = {
     "r": "table",
@@ -238,6 +243,52 @@ def _inspect_postgres(
         """
     )
 
+    extras_sql = text(
+        """
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            CASE WHEN c.relkind IN ('r', 'm', 'p')
+                THEN pg_total_relation_size(c.oid) END AS total_bytes,
+            CASE WHEN c.relkind IN ('v', 'm')
+                THEN pg_get_viewdef(c.oid, true) END AS definition
+        FROM pg_class c
+        JOIN pg_namespace n
+            ON n.oid = c.relnamespace
+        WHERE c.relkind IN ('r', 'p', 'v', 'm')
+          AND n.nspname NOT IN (
+              'pg_catalog',
+              'information_schema',
+              'pg_toast'
+          )
+          AND NOT c.relispartition
+          AND has_table_privilege(c.oid, 'SELECT')
+        """
+    )
+
+    constraints_sql = text(
+        """
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            con.conname AS name,
+            con.contype AS kind,
+            pg_get_constraintdef(con.oid, true) AS definition
+        FROM pg_constraint con
+        JOIN pg_class c
+            ON c.oid = con.conrelid
+        JOIN pg_namespace n
+            ON n.oid = c.relnamespace
+        WHERE con.contype IN ('u', 'c', 'x')
+          AND n.nspname NOT IN (
+              'pg_catalog',
+              'information_schema',
+              'pg_toast'
+          )
+        ORDER BY n.nspname, c.relname, con.conname
+        """
+    )
+
     with get_connection(datasource_name, config) as connection:
 
         columns = (
@@ -284,6 +335,23 @@ def _inspect_postgres(
             .mappings()
             .all()
         )
+
+    # Optional details: a failure here must never break discovery.
+    extras, constraints = [], []
+
+    try:
+
+        with get_connection(datasource_name, config) as connection:
+
+            extras = connection.execute(extras_sql).mappings().all()
+
+        with get_connection(datasource_name, config) as connection:
+
+            constraints = connection.execute(constraints_sql).mappings().all()
+
+    except Exception as exc:
+
+        logger.warning("Optional PostgreSQL details not available: %s", exc)
 
     primary_key_set = {
         (
@@ -431,6 +499,35 @@ def _inspect_postgres(
                 unique=row["is_unique"],
                 method=row["method"],
                 definition=row["index_definition"],
+            )
+        )
+
+    # ---------------------------------------------------------
+    # Sizes, view definitions, unique and check constraints
+    # ---------------------------------------------------------
+
+    for row in extras:
+
+        table = tables.get((row["table_schema"], row["table_name"]))
+
+        if table is None:
+            continue
+
+        table.size_bytes = row["total_bytes"] or None
+        table.definition = row["definition"]
+
+    for row in constraints:
+
+        table = tables.get((row["table_schema"], row["table_name"]))
+
+        if table is None:
+            continue
+
+        table.constraints.append(
+            ConstraintMetadata(
+                name=row["name"],
+                kind="check" if row["kind"] == "c" else "unique",
+                definition=row["definition"],
             )
         )
 

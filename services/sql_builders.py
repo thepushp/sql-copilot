@@ -138,6 +138,25 @@ def parse_filter(expression, dialect_key):
     return node
 
 
+def equals_filter(column_name, value, dialect_key):
+    """A filter condition text such as "id" = 5, quoted for the dialect.
+
+    Used to jump to the row a foreign key points to; the value comes from data,
+    so it is always written as a typed literal, never pasted as text.
+    """
+
+    if isinstance(value, bool):
+        literal = exp.Boolean(this=value)
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        literal = exp.Literal.number(value)
+    else:
+        literal = exp.Literal.string(str(value))
+
+    condition = exp.EQ(this=column_ref(column_name, dialect_key), expression=literal)
+
+    return to_sql(condition, dialect_key)
+
+
 # ------------------------------------------------------------------- paging
 
 def ordered(name, descending, dialect_key):
