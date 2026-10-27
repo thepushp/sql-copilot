@@ -951,6 +951,20 @@ class TestSmarterAnswers:
         assert reply["edited"] is True
         assert reply["sql"] == "SELECT name FROM customer WHERE id = 2"
 
+    def test_edit_shows_what_changed(self, harness):
+        ui = harness("SELECT name FROM customer ORDER BY id").index()
+        ui.ask("customers")
+        assert not [e for e in ui.at.main.expander if "What changed" in e.label]
+
+        ui.at.text_area(key="edit_sql_1").set_value("SELECT name FROM customer WHERE id = 2")
+        next(b for b in ui.at.button if b.key == "run_edit_1").click().run()
+
+        assert not ui.at.exception, ui.at.exception
+        assert ui.messages[1]["previous"]["rows"]["name"].tolist() == ["Ann", "Bob"]
+        panel = next(e for e in ui.at.main.expander if "What changed" in e.label)
+        text = " ".join(m.value for m in panel.markdown)
+        assert "2 before, 1 now" in text
+
     def test_edited_write_sql_is_refused(self, harness, shop_db):
         ui = harness("SELECT name FROM customer ORDER BY id").index()
         ui.ask("customers")

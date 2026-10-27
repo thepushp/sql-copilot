@@ -85,6 +85,7 @@ from services.query_checks import (
 )
 from services.sql_explain import describe_sql
 from services.sql_qualify import finalize_sql, format_sql, tables_in_sql
+from services.result_diff import compare_results, sql_diff
 from services.example_store import (
     add_example,
     remove_example,
@@ -1085,6 +1086,8 @@ def approve_message(index):
     )
 
 
+MAX_SHOWN_DIFF = 20
+
 FEEDBACK_REASONS = (
     "Wrong tables",
     "Wrong filter or value",
@@ -1228,6 +1231,13 @@ def run_edited_sql(index):
 
         return
 
+    if message.get("rows") is not None and message.get("sql"):
+
+        message["previous"] = {
+            "sql": message["sql"],
+            "rows": message["rows"],
+        }
+
     message["sql"] = sql
     message["rows"] = result.rows
     message["row_count"] = result.row_count
@@ -1243,6 +1253,68 @@ def run_edited_sql(index):
 def ask_followup(text):
 
     st.session_state.pending_question = text
+
+
+def render_changes(message, index):
+    """How the edited query differs from the one it replaced."""
+
+    previous = message["previous"]
+    dialect_key = message.get("dialect", "postgresql")
+
+    before = format_sql(previous["sql"], dialect_key)
+    after = format_sql(message["sql"], dialect_key)
+
+    result = compare_results(previous["rows"], message["rows"])
+
+    with st.expander("What changed since the previous run"):
+
+        text = sql_diff(before, after)
+
+        if text:
+
+            st.code(text, language="diff")
+
+        else:
+
+            st.caption("The SQL is the same apart from formatting.")
+
+        st.markdown(
+            f"**Rows:** {result.rows_before:,} before, {result.rows_after:,} now"
+        )
+
+        if result.columns_added:
+
+            st.markdown("**New columns:** " + ", ".join(result.columns_added))
+
+        if result.columns_removed:
+
+            st.markdown("**Removed columns:** " + ", ".join(result.columns_removed))
+
+        if not result.comparable:
+
+            st.caption("The two results share no columns, so rows cannot be compared.")
+
+            return
+
+        if result.same:
+
+            st.caption("The rows are identical.")
+
+        for label, frame in (("Rows added", result.added), ("Rows removed", result.removed)):
+
+            if frame is not None and not frame.empty:
+
+                st.markdown(f"**{label}** ({len(frame):,})")
+
+                st.dataframe(
+                    display_safe(frame.head(MAX_SHOWN_DIFF)),
+                    hide_index=True,
+                    width="stretch",
+                )
+
+                if len(frame) > MAX_SHOWN_DIFF:
+
+                    st.caption(f"Showing the first {MAX_SHOWN_DIFF} of {len(frame):,}.")
 
 
 def render_wrong_button(message, index):
@@ -1413,6 +1485,10 @@ def render_message(message, index, followups=False):
         can_rate = bool(message.get("sql")) and not message.get("blocked") and (
             rows is not None
         )
+
+        if message.get("previous") and rows is not None:
+
+            render_changes(message, index)
 
         if has_rows or can_rate:
 
