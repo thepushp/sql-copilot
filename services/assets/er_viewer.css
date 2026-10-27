@@ -148,3 +148,6 @@ svg { display: block; }
 
 .icon-btn { font: inherit; color: var(--text); padding: 3px 9px; border: 1px solid var(--btn-border); border-radius: 6px; background: var(--btn); cursor: pointer; flex-shrink: 0; }
 .icon-btn:hover { background: var(--btn-hover); }
+
+.actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: auto; }
+#info { flex: 1 1 180px; }
