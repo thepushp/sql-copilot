@@ -51,6 +51,11 @@ from ui.common import (
     show_html,
 )
 from ui.history import render_history
+from ui.share import (
+    decode as decode_link,
+    encode as encode_link,
+    validate as validate_link,
+)
 from ui.explorer import open_in_er_diagram, render_explorer
 from services.er_diagram import (
     COLUMN_MODES,
@@ -1955,6 +1960,21 @@ def _last_answer_tables():
     return []
 
 
+def _write_link(mode, table, schema):
+    """Keep the page URL in step with the diagram so it can be shared."""
+
+    wanted = encode_link(
+        mode,
+        table,
+        schema,
+        st.session_state.get("er_depth"),
+    )
+
+    if dict(st.query_params) != wanted:
+
+        st.query_params.from_dict(wanted)
+
+
 def render_er_diagram():
 
     metadata = st.session_state.database_metadata
@@ -1966,6 +1986,19 @@ def render_er_diagram():
         return
 
     index = table_index(metadata)
+
+    # A shared link waits here until the database has been indexed.
+    link = st.session_state.pop("pending_link", None)
+
+    if link:
+
+        for name, value in validate_link(
+            link,
+            set(index),
+            {schema.name for schema in metadata.schemas},
+        ).items():
+
+            st.session_state[name] = value
 
     # Controls keep their natural width and wrap onto a second row when the
     # window is narrow, instead of being squeezed.
@@ -2043,6 +2076,8 @@ def render_er_diagram():
         )
 
     keys = []
+    start = None
+    schema = None
 
     if mode == "Around a table":
 
@@ -2116,6 +2151,8 @@ def render_er_diagram():
         )
 
         return
+
+    _write_link(mode, start, schema)
 
     total = len(keys)
 
@@ -2333,6 +2370,18 @@ def main():
 
     init_state()
 
+    # Open a shared ER link once per browser session.
+    if not st.session_state.get("link_read"):
+
+        st.session_state["link_read"] = True
+
+        link = decode_link(dict(st.query_params))
+
+        if link:
+
+            st.session_state["nav"] = NAV_ER
+            st.session_state["pending_link"] = link
+
     settings = render_sidebar()
 
     st.html(f"<style>{BASE_CSS}</style>")
@@ -2340,6 +2389,10 @@ def main():
     st.html(brand_html(20, "sqlcopilot-brand"))
 
     view = render_header(settings)
+
+    if view != NAV_ER and "view" in st.query_params:
+
+        st.query_params.clear()
 
     # Only the active section is built, so switching away from the chat does
     # not redraw the diagram on every message.

@@ -34,7 +34,7 @@ APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
 
 class Harness:
 
-    def __init__(self, monkeypatch, *sql_answers, tables=("main.customer", "main.orders"), summary="Summary text."):
+    def __init__(self, monkeypatch, *sql_answers, tables=("main.customer", "main.orders"), summary="Summary text.", query=None):
         self.queue = list(sql_answers)
         self.tables = list(tables)
 
@@ -48,7 +48,10 @@ class Harness:
         self.llm = ScriptedLLM(respond)
         monkeypatch.setattr("services.llm_service.get_llm", lambda **kwargs: self.llm)
 
-        self.at = AppTest.from_file(APP_PATH, default_timeout=60).run()
+        self.at = AppTest.from_file(APP_PATH, default_timeout=60)
+        for name, value in (query or {}).items():
+            self.at.query_params[name] = value
+        self.at.run()
         assert not self.at.exception, self.at.exception
 
     # --- element helpers -------------------------------------------------
@@ -1026,3 +1029,29 @@ class TestFormattingAndFollowUpPrompt:
         assert "PREVIOUS QUERY" not in first_prompt
         assert "PREVIOUS QUERY" in ui.llm.calls[-1]
         assert "orders" in ui.llm.calls[-1].split("PREVIOUS QUERY")[1]
+
+
+class TestShareableLink:
+
+    def test_diagram_state_is_written_to_the_url(self, harness):
+        ui = harness("SELECT 1").index().goto(ER)
+
+        params = dict(ui.at.query_params)
+        assert params["view"] == ["er"]
+        assert params["mode"] == ["table"]
+        assert params["table"][0].startswith("main.")
+
+    def test_leaving_the_diagram_clears_the_url(self, harness):
+        ui = harness("SELECT 1").index().goto(ER).goto(CHAT)
+
+        assert not dict(ui.at.query_params)
+
+    def test_a_link_is_applied_after_indexing(self, harness):
+        ui = harness(
+            "SELECT 1",
+            query={"view": "er", "mode": "table", "table": "main.order_item", "depth": "2"},
+        )
+        ui.index()
+
+        assert ui.at.session_state.er_table == "main.order_item"
+        assert ui.at.session_state.er_depth == 2
