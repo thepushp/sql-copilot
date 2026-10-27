@@ -943,10 +943,69 @@
 
     initLegend(model);
 
+    // Minimap: whole diagram at a glance, the visible part outlined; click or
+    // drag to move there. Only shown while part of the diagram is off screen.
+    var mini = document.getElementById("minimap");
+    var miniSvg = document.getElementById("mini");
+    var MINI_W = 170;
+    var MINI_H = 120;
+    var miniScale = Math.min(MINI_W / size.width, MINI_H / size.height);
+    miniSvg.setAttribute("width", Math.round(size.width * miniScale));
+    miniSvg.setAttribute("height", Math.round(size.height * miniScale));
+    miniSvg.setAttribute("viewBox", "0 0 " + size.width + " " + size.height);
+    model.tables.forEach(function (table) {
+      el("rect", {
+        "class": "mini-table",
+        x: table.x, y: table.y, width: table.w, height: table.h,
+        fill: model.showSchema ? schemaColor(model, table.schema) : "",
+      }, miniSvg);
+    });
+    var view = el("rect", { "class": "mini-view" }, miniSvg);
+
+    function updateMinimap() {
+      var w = size.width * state.scale;
+      var h = size.height * state.scale;
+      mini.hidden = w <= stage.clientWidth + 1 && h <= stage.clientHeight + 1;
+      view.setAttribute("x", stage.scrollLeft / state.scale);
+      view.setAttribute("y", stage.scrollTop / state.scale);
+      view.setAttribute("width", Math.min(size.width, stage.clientWidth / state.scale));
+      view.setAttribute("height", Math.min(size.height, stage.clientHeight / state.scale));
+    }
+
+    function moveTo(event) {
+      var box = miniSvg.getBoundingClientRect();
+      var x = (event.clientX - box.left) / miniScale;
+      var y = (event.clientY - box.top) / miniScale;
+      stage.scrollLeft = Math.max(0, x * state.scale - stage.clientWidth / 2);
+      stage.scrollTop = Math.max(0, y * state.scale - stage.clientHeight / 2);
+    }
+
+    var dragging = false;
+    miniSvg.addEventListener("pointerdown", function (event) {
+      dragging = true;
+      miniSvg.setPointerCapture(event.pointerId);
+      moveTo(event);
+    });
+    miniSvg.addEventListener("pointermove", function (event) {
+      if (dragging) {
+        moveTo(event);
+      }
+    });
+    miniSvg.addEventListener("pointerup", function () {
+      dragging = false;
+    });
+    stage.addEventListener("scroll", updateMinimap);
+    window.addEventListener("resize", updateMinimap);
+    ["zoom-in", "zoom-out", "fit"].forEach(function (id) {
+      document.getElementById(id).addEventListener("click", updateMinimap);
+    });
+    updateMinimap();
+
     // Start readable: a very wide diagram scrolls sideways instead of shrinking
     // its text to nothing. "Fit" gives the overview.
     setScale(Math.max(MIN_START_SCALE, fitScale()));
     centerOnFocus();
+    updateMinimap();
     show(null);
     summary.textContent = data.summary || "";
     initExportMenu(svg, data.exports || {});

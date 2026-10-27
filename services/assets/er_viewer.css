@@ -140,3 +140,8 @@ svg { display: block; }
 .sw-text.pk { color: var(--pk); }
 .sw-text.fk { color: var(--fk); }
 .sw-block { display: inline-block; width: 26px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+#minimap { position: fixed; right: 18px; bottom: 18px; z-index: 10; padding: 4px; border: 1px solid var(--btn-border); border-radius: 8px; background: var(--bar); opacity: 0.92; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
+#mini { touch-action: none; cursor: pointer; }
+.mini-table { fill: var(--frame); opacity: 0.8; }
+.mini-view { fill: var(--accent); fill-opacity: 0.12; stroke: var(--accent); vector-effect: non-scaling-stroke; stroke-width: 1.5; }
