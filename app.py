@@ -138,6 +138,12 @@ BASE_CSS = """
   display: block; max-width: 100%; margin: 0; text-align: left; font-size: 0.85rem;
   line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* The section switcher stays in view while the page scrolls. The wrapper is
+   targeted too, because sticky only works against the element's own parent. */
+[data-testid="stLayoutWrapper"]:has(> .st-key-topnav), .st-key-topnav {
+  position: sticky; top: 3.4rem; z-index: 999;
+  background: var(--sqlcopilot-bg, white); padding: 0.3rem 0 0.45rem;
+}
 .block-container { padding-top: 4.5rem !important; padding-bottom: 1rem !important; }
 """
 
@@ -170,6 +176,18 @@ class RunSettings:
     smart_select: bool
     datasource_config: dict | None = None
     dialect_key: str = "postgresql"
+
+
+def page_background():
+    """The page colour, so the pinned section bar can cover what scrolls under it."""
+
+    configured = st.get_option("theme.backgroundColor")
+
+    if configured:
+
+        return configured
+
+    return "#0e1117" if _theme() == "dark" else "#ffffff"
 
 
 def init_state():
@@ -2392,6 +2410,7 @@ def render_header(settings):
     metadata = st.session_state.database_metadata
 
     with st.container(
+        key="topnav",
         horizontal=True,
         vertical_alignment="center",
         horizontal_alignment="distribute",
@@ -2542,7 +2561,10 @@ def main():
 
     settings = render_sidebar()
 
-    st.html(f"<style>{BASE_CSS}</style>")
+    st.html(
+        f"<style>:root {{ --sqlcopilot-bg: {page_background()}; }}"
+        f"{BASE_CSS}</style>"
+    )
 
     st.html(brand_html(20, "sqlcopilot-brand"))
 
