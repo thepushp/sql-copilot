@@ -329,6 +329,7 @@ def _answer_question(question, history, settings, status):
                 "The generated SQL was rejected by the "
                 f"safety guard: {validation.reason}"
             )
+            message["error_kind"] = "guard"
 
             return message
 
@@ -388,6 +389,7 @@ def _answer_question(question, history, settings, status):
         if result.error:
 
             message["error"] = f"The query failed: {result.error}"
+            message["error_kind"] = "query"
 
             return message
 
@@ -507,6 +509,7 @@ def _answer_question(question, history, settings, status):
     except NoSQLGenerated as exc:
 
         message["content"] = str(exc)
+        message["no_sql"] = True
 
         return message
 
@@ -515,6 +518,7 @@ def _answer_question(question, history, settings, status):
         logger.warning("Answer failed: %s", exc, exc_info=True)
 
         message["error"] = str(exc)
+        message["error_kind"] = "model"
 
         return message
 

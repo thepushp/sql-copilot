@@ -5,12 +5,15 @@ import streamlit as st
 from ui.progress import Progress
 from services.query_service import build_history
 from ui.answering import answer_question
+from ui.hints import example_hint, render_not_indexed
 from ui.indexing import run_example
 from ui.messages import render_message
 from ui.state import is_indexed
 
 
-def render_chat(datasource_name, busy):
+def render_chat(settings, busy):
+
+    datasource_name = settings.datasource_name
 
     indexed = is_indexed(datasource_name)
 
@@ -20,11 +23,10 @@ def render_chat(datasource_name, busy):
 
     elif not st.session_state.messages and not indexed:
 
-        st.info(
-            "**Get started**\n\n"
-            "1. Pick a datasource in the sidebar.\n"
-            "2. Click **Discover & index database**.\n"
-            "3. Ask a question in the box at the bottom."
+        render_not_indexed(
+            settings,
+            "Ask your database a question in plain English.",
+            "chat",
         )
 
     elif not st.session_state.messages:
@@ -58,7 +60,17 @@ def render_chat(datasource_name, busy):
 
         else:
 
-            st.markdown("**Ask a question about your database below.**")
+            suggestion = example_hint(st.session_state.database_metadata)
+
+            st.markdown(
+                "**Ask a question about your database below.**"
+                + (f" For example: *{suggestion}*" if suggestion else "")
+            )
+
+            st.caption(
+                "No ready-made examples could be built for this database. "
+                "Use the **Explorer** to see what tables and columns exist."
+            )
 
     last = len(st.session_state.messages) - 1
 
@@ -91,7 +103,7 @@ def render_chat_view(settings):
     st.session_state.pending_example = None
 
     render_chat(
-        datasource_name,
+        settings,
         busy=bool(question) or example_position is not None,
     )
 
@@ -124,7 +136,14 @@ def render_chat_view(settings):
 
         if not settings.model:
 
-            st.warning("Choose or enter a model in the sidebar.")
+            st.warning(
+                f"**No model is selected for {settings.provider}.**\n\n"
+                "Open **Model & provider** in the sidebar and choose one. "
+                "If the list is empty the provider could not be reached: "
+                "for Ollama start it (`ollama serve`) and pull a model "
+                "(`ollama pull <model>`); for hosted providers check the API key. "
+                "You can also pick **Custom...** and type a model name."
+            )
 
             return
 

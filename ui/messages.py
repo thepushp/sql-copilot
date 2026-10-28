@@ -10,6 +10,7 @@ from services.exports import display_safe
 from ui.common import NAV_ER
 from ui.results import render_result
 from ui.explorer import open_in_er_diagram
+from ui.hints import render_no_sql_tips, show_error
 from services.followups import suggest_followups
 from services.sql_qualify import format_sql
 from services.result_diff import compare_results, sql_diff
@@ -308,7 +309,7 @@ def render_message(message, index, followups=False):
 
         if message.get("error"):
 
-            st.error(message["error"])
+            show_error(message["error"], message.get("error_kind", "model"))
 
         elif message.get("clarify"):
 
@@ -317,6 +318,10 @@ def render_message(message, index, followups=False):
         elif message.get("content"):
 
             st.markdown(message["content"])
+
+            if message.get("no_sql"):
+
+                render_no_sql_tips()
 
         if message.get("er_tables") is not None:
 
@@ -398,7 +403,7 @@ def render_message(message, index, followups=False):
 
                     if message.get("edit_error"):
 
-                        st.error(message["edit_error"])
+                        show_error(message["edit_error"], "query")
 
         has_rows = rows is not None and not rows.empty
         can_rate = bool(message.get("sql")) and not message.get("blocked") and (

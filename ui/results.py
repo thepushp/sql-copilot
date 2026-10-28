@@ -11,6 +11,7 @@ from services.charting import (
     chartable_columns,
     make_chart,
 )
+from services.error_hints import EMPTY_RESULT_TIPS
 from services.exports import display_safe
 
 
@@ -181,7 +182,7 @@ def render_result(rows, key="result"):
 
     if rows.empty:
 
-        st.info("The query returned no rows.")
+        st.info("The query ran fine but returned no rows.\n\n**What to try**\n" + "\n".join(f"- {tip}" for tip in EMPTY_RESULT_TIPS))
 
         return
 

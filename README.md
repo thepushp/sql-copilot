@@ -12,6 +12,7 @@ Ask questions about your database in plain English and get SQL, results, charts 
 - **Safe by design:** one read-only statement only; writes, locks, dangerous functions and system catalogs are blocked; queries run in a read-only transaction with a timeout and a 500-row cap
 - **Verified example questions:** the landing page offers questions built from your schema and checked against your database, so they always work and need no model
 - **Conversation:** follow-ups, clarifying questions, automatic repair of failing queries, a 👍 button that teaches the app your verified answers, and a 👎 **Wrong** button that records why (wrong tables, wrong filter, ...), stops using that answer as an example, offers **Try again** with your reason, and warns the model away from that answer when you ask something similar
+- **Helpful errors and empty states:** when something fails (database connection, model, SQL, privacy rules) the original message is shown with a short *What to try* list, and pages that need an indexed database explain why and offer a one-click **Index this database**
 - **Live progress:** each step is listed with its time (kept under *How this was answered*) and the SQL appears as the model writes it
 - **Edit and compare:** every answer's SQL is editable and re-runs through the same checks; a *What changed* panel shows the SQL diff and which rows were added or removed
 - **Business glossary:** define your own terms (`bus: the vehicle table`)

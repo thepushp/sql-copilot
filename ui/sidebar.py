@@ -15,6 +15,7 @@ from ui.common import brand_html
 from ui.history import render_history
 from services.llm_service import DEFAULT_TIMEOUT
 from services import model_catalog
+from services.error_hints import with_tips
 from ui.indexing import NothingToIndex, _connection_from_form, add_connection, index_database, rebuild_index, refresh_example_questions, remove_connection, test_connection
 from ui.state import RunSettings, all_datasources, is_indexed
 
@@ -267,7 +268,13 @@ def render_connection_form():
 
     if message:
 
-        getattr(st, message[0])(message[1])
+        text = (
+            with_tips(message[1], "database")
+            if message[0] == "error" and message[1].startswith("Connection failed")
+            else message[1]
+        )
+
+        getattr(st, message[0])(text)
 
 
 def render_glossary():
@@ -376,7 +383,7 @@ def render_privacy(embedding_model):
 
             st.session_state.privacy = previous
 
-            st.error(f"Not applied: {exc}")
+            st.error(with_tips(f"Not applied: {exc}", "database"))
 
             return
 
@@ -465,7 +472,7 @@ def render_sidebar():
             default_embedding_model(),
         )
 
-        if st.button(
+        clicked = st.button(
             "Discover & index database",
             width="stretch",
             type=(
@@ -473,7 +480,9 @@ def render_sidebar():
                 if is_indexed(datasource_name)
                 else "primary"
             ),
-        ):
+        )
+
+        if clicked or st.session_state.pop("index_requested", False):
 
             index_database(
                 datasource_name,
@@ -491,9 +500,18 @@ def render_sidebar():
                 f"{metadata.view_count} views"
             )
 
+        elif (st.session_state.get("index_error") or {}).get("datasource") == datasource_name:
+
+            st.error(
+                with_tips(
+                    f"Database discovery failed: {st.session_state['index_error']['text']}",
+                    "database",
+                )
+            )
+
         else:
 
-            st.warning("Not indexed yet")
+            st.warning("Not indexed yet. Click **Discover & index database**.")
 
         st.divider()
 

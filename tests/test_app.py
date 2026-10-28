@@ -123,8 +123,8 @@ class TestStartupAndIndexing:
 
         assert ui.widget("selectbox", key="datasource_select").value == "Shop"
         assert ui.at.chat_input[0].disabled
-        assert any("Get started" in i.value for i in ui.at.info)
-        assert "Not indexed yet" in ui.sidebar_text()
+        assert any(b.label == "Index this database" for b in ui.at.main.button) and any("Ask your database a question" in i.value for i in ui.at.info)
+        assert any("Not indexed yet" in text for text in ui.sidebar_text())
 
     def test_indexing_enables_chat(self, harness):
         ui = harness("SELECT 1").index()
@@ -559,7 +559,7 @@ class TestConnectionForm:
         ui.button(key="conn_add").click().run()
 
         assert ui.at.chat_input[0].disabled
-        assert "Not indexed yet" in ui.sidebar_text()
+        assert any("Not indexed yet" in text for text in ui.sidebar_text())
 
     def test_sqlserver_shows_read_only_warning(self, harness):
         ui = harness("SELECT 1")
@@ -852,7 +852,8 @@ class TestErDiagram:
         self.mode(ui, "Tables from last answer")
 
         assert self.interactive(ui) is None
-        assert any("Ask a question first" in i.value for i in ui.at.info)
+        assert any("Ask a question in the Chat first" in i.value for i in ui.at.info)
+        assert [b for b in ui.at.main.button if b.key == "er_go_chat"]
 
     def test_excluded_tables_are_not_drawn(self, harness):
         ui = harness("SELECT 1").index()
@@ -1170,3 +1171,117 @@ class TestStepsAndPersistence:
         assert any("SQL" in label for label in labels) and any("query" in label.lower() for label in labels)
         assert all(seconds >= 0 for _, seconds in reply["steps"])
         assert any(e.label == "How this was answered" for e in ui.at.main.expander)
+
+
+class TestHelpfulStates:
+
+    def error_text(self, ui):
+        return " ".join(e.value for e in ui.at.error)
+
+    def test_explorer_and_er_explain_why_there_is_nothing_and_offer_the_fix(self, harness):
+        ui = harness("SELECT 1")
+
+        for section in (EXPLORER, ER):
+            ui.goto(section)
+            assert any("first reads the structure" in i.value for i in ui.at.info)
+            assert [b for b in ui.at.main.button if b.label == "Index this database"]
+
+    def test_the_index_button_on_the_page_indexes_the_database(self, harness):
+        ui = harness("SELECT 1").goto(EXPLORER)
+
+        next(b for b in ui.at.main.button if b.label == "Index this database").click().run()
+
+        assert not ui.at.exception, ui.at.exception
+        assert ui.at.session_state.schema_index is not None
+        assert not any("first reads the structure" in i.value for i in ui.at.info)
+        assert ui.at.session_state.explorer_selected
+
+    def test_a_failed_index_stays_visible_with_advice_on_every_page(self, harness, env):
+        from config.datasource_config import DATASOURCES
+
+        DATASOURCES["Shop"]["database"] = str(env / "missing" / "nope.db")
+        ui = harness("SELECT 1")
+        ui.button("Discover & index database").click().run()
+
+        assert not ui.at.exception, ui.at.exception
+        assert ui.at.session_state.index_error["datasource"] == "Shop"
+        sidebar = " ".join(e.value for e in ui.at.sidebar.error)
+        assert "Database discovery failed" in sidebar and "What to try" in sidebar and "path" in sidebar
+
+        ui.goto(EXPLORER)
+        assert "Could not read **Shop**" in self.error_text(ui) and "What to try" in self.error_text(ui)
+
+    def test_a_good_index_clears_an_earlier_failure(self, harness, env):
+        from config.datasource_config import DATASOURCES
+
+        good = DATASOURCES["Shop"]["database"]
+        DATASOURCES["Shop"]["database"] = str(env / "missing.db")
+        ui = harness("SELECT 1")
+        ui.button("Discover & index database").click().run()
+        assert ui.at.session_state.index_error
+
+        DATASOURCES["Shop"]["database"] = good
+        ui.button("Discover & index database").click().run()
+
+        assert "index_error" not in ui.at.session_state
+
+    def test_model_failure_explains_what_to_do(self, harness):
+        ui = harness("SELECT 1").index()
+
+        def broken(prompt, number):
+            if "choose which database tables" in prompt:
+                return "[]"
+            raise ConnectionError("Connection refused (localhost:11434)")
+
+        ui.llm.responder = broken
+        reply = ui.ask("list customers")
+
+        assert reply["error_kind"] == "model"
+        assert "ollama serve" in self.error_text(ui) and "What to try" in self.error_text(ui)
+
+    def test_guard_refusal_explains_itself(self, harness):
+        ui = harness("SELECT name FROM sqlite_master").index()
+        reply = ui.ask("show tables")
+
+        assert reply["error_kind"] == "guard"
+        assert "system catalog" in self.error_text(ui) and "Explorer" in self.error_text(ui)
+
+    def test_failed_query_points_to_the_explorer(self, harness):
+        ui = harness("SELECT nope FROM customer").index()
+        reply = ui.ask("customers")
+
+        assert reply["error_kind"] == "query"
+        assert "Explorer" in self.error_text(ui) or "index" in self.error_text(ui)
+
+    def test_no_sql_answer_lists_things_to_try(self, harness):
+        ui = harness("CANNOT_GENERATE_SQL").index()
+        reply = ui.ask("what is the meaning of life")
+
+        assert reply["no_sql"] is True
+        text = " ".join(m.value for m in ui.at.markdown)
+        assert "What to try" in text and "Business glossary" in text
+
+    def test_empty_result_suggests_next_steps(self, harness):
+        ui = harness("SELECT name FROM customer WHERE id = 99").index()
+        ui.ask("customer 99")
+
+        assert any("returned no rows" in i.value and "What to try" in i.value for i in ui.at.info)
+
+    def test_er_hint_offers_a_way_to_the_chat(self, harness):
+        ui = harness("SELECT 1").index().goto(ER)
+        ui.seg("er_mode").set_value("Tables from last answer").run()
+
+        next(b for b in ui.at.main.button if b.key == "er_go_chat").click().run()
+
+        assert ui.at.session_state.nav == CHAT
+
+
+def test_example_hint_names_the_biggest_table():
+    from database.schema_metadata import DatabaseMetadata, SchemaMetadata, TableMetadata
+    from ui.hints import example_hint
+
+    small = TableMetadata("s", "small", approx_rows=5)
+    big = TableMetadata("s", "big", approx_rows=5000)
+
+    assert example_hint(DatabaseMetadata([SchemaMetadata("s", [small, big])])) == "how many rows are in big?"
+    assert example_hint(DatabaseMetadata([])) is None

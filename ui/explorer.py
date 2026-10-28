@@ -35,6 +35,7 @@ from services.er_diagram import (
     table_index,
 )
 from services.er_interactive import graph_data, viewer_height, viewer_html
+from services.error_hints import with_tips
 from services.exports import EXPORT_ROW_LIMIT, build_exports, display_safe
 from services.schema_search import search_metadata
 from services.query_plan import explain
@@ -50,6 +51,7 @@ from services.sql_qualify import format_sql
 from services.sql_templates import generate_templates, group_template
 from services.table_info import column_targets, incoming, outgoing
 from ui.common import NAV_ER, current_theme, show_html
+from ui.hints import render_not_indexed, show_error
 from ui.history import one_line
 from ui.results import render_result
 
@@ -196,7 +198,7 @@ def render_navigator(metadata, index):
 
         st.caption(
             f"{len(hits)} match{'es' if len(hits) != 1 else ''} in all schemas"
-            if hits else "Nothing matches. Try fewer or shorter words."
+            if hits else "Nothing matches. Try fewer or shorter words, or clear the search to browse by schema."
         )
 
     else:
@@ -380,7 +382,7 @@ def render_column_profile(settings, table, key):
     data, errors = cache[cache_key]
 
     for text in errors:
-        st.warning(text)
+        st.warning(with_tips(text, "query"))
 
     summary = summarize(data.get("stats"))
 
@@ -580,6 +582,13 @@ def _reset_page():
     st.session_state.pop("_data_count", None)
 
 
+def _clear_filter():
+
+    st.session_state["data_filter"] = ""
+
+    _reset_page()
+
+
 def _goto_page(delta):
 
     st.session_state["data_page"] = max(0, st.session_state.get("data_page", 0) + delta)
@@ -671,7 +680,7 @@ def render_data(settings, table, key, index):
     sql, error = _current_query(settings, table, page_size + 1, page * page_size)
 
     if error:
-        st.error(error)
+        show_error(error, "filter")
         return
 
     cache = st.session_state.get("_data_cache")
@@ -693,7 +702,7 @@ def render_data(settings, table, key, index):
         )
 
     if error:
-        st.error(error)
+        show_error(error, "query")
         return
 
     frame = result.rows
@@ -721,7 +730,23 @@ def render_data(settings, table, key, index):
         _render_count_and_export(settings, table, key)
 
     if frame.empty:
-        st.info("No rows match." if page == 0 else "No more rows.")
+
+        filtered = bool(st.session_state.get("data_filter", "").strip())
+
+        if page > 0:
+
+            st.info("That was the last page.")
+            st.button("Back to the first page", key="data_first", on_click=_reset_page)
+
+        elif filtered:
+
+            st.info("No rows match this filter. Check the spelling of the values, or clear it to see the table.")
+            st.button("Clear the filter", key="data_clear_filter", on_click=_clear_filter)
+
+        else:
+
+            st.info("This table has no rows.")
+
         return
 
     event = st.dataframe(
@@ -933,7 +958,7 @@ def _render_count_and_export(settings, table, key):
         ready = st.session_state.get("_export")
 
         if ready and ready.get("error"):
-            st.error(ready["error"])
+            show_error(ready["error"], "query")
 
         elif ready:
 
@@ -1099,7 +1124,7 @@ def render_free_query(settings, key, template_sql):
 
     if saved["error"]:
 
-        st.error(saved["error"])
+        show_error(saved["error"], "query")
 
     else:
 
@@ -1159,7 +1184,7 @@ def _render_templates(settings, table, key, index):
     if saved and saved["sql"] == template.sql:
 
         if saved["error"]:
-            st.error(saved["error"])
+            show_error(saved["error"], "query")
         else:
             st.dataframe(display_safe(saved["result"].rows), hide_index=True, width="stretch")
             st.caption(f"{saved['result'].row_count} rows · {saved['result'].execution_ms:.0f} ms")
@@ -1225,7 +1250,11 @@ def render_explorer(settings):
 
     if not metadata:
 
-        st.info("Index the database to browse its schema.")
+        render_not_indexed(
+            settings,
+            "Index the database to browse its tables, columns and relationships.",
+            "explorer",
+        )
 
         return
 

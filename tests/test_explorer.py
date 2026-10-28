@@ -1133,3 +1133,46 @@ class TestTriggersHistoryAndStars:
             ui.button(key="free_run", sidebar=False).click().run()
 
         assert ui.at.session_state.sql_free_history == ["SELECT id FROM orders"]
+
+
+class TestExplorerHelp:
+
+    def filter_by(self, ui, text):
+        next(t for t in ui.at.text_input if t.key == "data_filter").set_value(text).run()
+        assert not ui.at.exception, ui.at.exception
+
+    def test_a_bad_filter_says_how_to_write_one(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "Data")
+        self.filter_by(ui, "status = ")
+
+        text = " ".join(e.value for e in ui.at.error)
+        assert "What to try" in text and "WHERE" in text
+
+    def test_no_matching_rows_offers_to_clear_the_filter(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "Data")
+        self.filter_by(ui, "status = 'NOPE'")
+
+        assert any("No rows match this filter" in i.value for i in ui.at.info)
+
+        next(b for b in ui.at.main.button if b.key == "data_clear_filter").click().run()
+
+        assert ui.at.session_state.data_filter == ""
+        assert len(grid(ui)) > 0
+
+    def test_an_unknown_column_in_a_filter_points_to_the_properties(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "Data")
+        self.filter_by(ui, "colour = 'red'")
+
+        text = " ".join(e.value for e in ui.at.error)
+        assert "What to try" in text
+
+    def test_a_failing_free_query_gets_advice(self, ui):
+        open_table(ui, "main.orders")
+        section(ui, "SQL")
+        next(t for t in ui.at.text_area if t.key == "sql_free").set_value("SELECT nope FROM orders").run()
+        ui.button(key="free_run", sidebar=False).click().run()
+
+        assert "What to try" in " ".join(e.value for e in ui.at.error)

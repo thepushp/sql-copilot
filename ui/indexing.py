@@ -306,9 +306,14 @@ def index_database(datasource_name, embedding_model, config=None):
                 error=str(exc),
             )
 
-            st.error(f"Database discovery failed: {exc}")
+            st.session_state["index_error"] = {
+                "datasource": datasource_name,
+                "text": str(exc).strip().splitlines()[0][:300] if str(exc).strip() else type(exc).__name__,
+            }
 
             return
+
+    st.session_state.pop("index_error", None)
 
     st.session_state.messages = []
 

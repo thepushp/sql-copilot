@@ -60,7 +60,7 @@ def main():
 
     elif view == NAV_ER:
 
-        render_er_diagram()
+        render_er_diagram(settings)
 
     else:
 

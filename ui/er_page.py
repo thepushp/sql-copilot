@@ -4,6 +4,7 @@ import streamlit as st
 
 from services.er_interactive import graph_data, viewer_height, viewer_html
 from ui.common import current_theme as _theme, show_html
+from ui.hints import go_to_chat, render_not_indexed
 from ui.share import encode as encode_link, validate as validate_link
 from services.er_diagram import (
     COLUMN_MODES,
@@ -54,13 +55,17 @@ def _write_link(mode, table, schema):
         st.query_params.from_dict(wanted)
 
 
-def render_er_diagram():
+def render_er_diagram(settings):
 
     metadata = st.session_state.database_metadata
 
     if not metadata:
 
-        st.info("Index the database to draw its relationships.")
+        render_not_indexed(
+            settings,
+            "Index the database to draw how its tables relate to each other.",
+            "er",
+        )
 
         return
 
@@ -212,7 +217,9 @@ def render_er_diagram():
 
         if not keys:
 
-            st.info("Ask a question first; its tables will appear here.")
+            st.info("Ask a question in the Chat first; the tables it used will appear here.")
+
+            st.button("Go to Chat", icon=":material/chat:", key="er_go_chat", on_click=go_to_chat)
 
             return
 
@@ -226,7 +233,8 @@ def render_er_diagram():
             "No tables to show. This schema has no relationships; "
             "turn off \"Hide tables without relationships\" to list its tables."
             if mode == "Whole schema"
-            else "No tables to show for this selection."
+            else "No tables to show for this selection. Pick another table or schema, "
+            "or turn on \"Show inferred relationships\" in the View menu."
         )
 
         return
