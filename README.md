@@ -29,23 +29,35 @@ Ask questions about your database in plain English and get SQL, results, charts 
 
 ## Screenshots
 
-The screenshots use a small demo shop database (SQLite).
+The screenshots use a small demo shop database (SQLite). The chat answer was produced with a stand-in model so the screenshots are reproducible; everything on screen is drawn by the real app.
 
 **Verified example questions on the landing page** (run instantly, no model needed)
 
 ![Chat landing page with verified example questions](docs/screenshots/chat-landing.png)
 
-**An answer with table, chart, SQL, CSV download and follow-up suggestions**
+**An answer with a sortable table, SQL, CSV download, Correct / Wrong buttons and follow-up suggestions**
 
 ![Chat answer showing a result table](docs/screenshots/chat-answer.png)
 
-**Explorer:** browse, filter, sort and export table data
+**The same answer as a chart** (switch type, axes, combine rows or split by)
 
-![Explorer showing the Data section of a table](docs/screenshots/explorer.png)
+![Chart tab with the chart type and axis pickers](docs/screenshots/chat-chart.png)
 
-**Interactive ER diagram**
+**Explorer:** browse, filter and sort table data, select a row to see it in full and follow its relationships
 
-![Interactive ER diagram of the whole schema](docs/screenshots/er-diagram.png)
+![Explorer showing the Data section of a table with a selected row](docs/screenshots/explorer.png)
+
+**Explorer:** profile a column (nulls, distinct values, range, spread)
+
+![Explorer Properties section with a column profile](docs/screenshots/explorer-profile.png)
+
+**Interactive ER diagram** (find a table, zoom, legend, export, full screen)
+
+![Interactive ER diagram of the whole schema with the legend open](docs/screenshots/er-diagram.png)
+
+**When something goes wrong:** the original message plus a short list of what to try
+
+![A failed connection with a What to try list and an Index this database button](docs/screenshots/helpful-errors.png)
 
 ## Quick start
 
@@ -128,7 +140,7 @@ Publish the port on `127.0.0.1` as shown. Inside the container the app must list
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                   # ~30 s, no network, model or database needed
+pytest                                   # ~1.5 min, no network, model or database needed
 SQL_COPILOT_PG_TEST=1 pytest -m integration   # optional: read-only checks against your PostgreSQL
 ```
 

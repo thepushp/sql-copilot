@@ -138,7 +138,7 @@ Empty placeholders (safe to delete): `config/settings.py`, `rag/vector_store.py`
 
 ## Tests
 
-`pytest` (config in `pytest.ini`, tests in `tests/`) runs in about 15s with no network, LLM, embedding download or PostgreSQL needed.
+`pytest` (config in `pytest.ini`, tests in `tests/`) runs in about 80 s (including the browser tests) with no network, LLM, embedding download or PostgreSQL needed.
 
 - Unit tests per module: SQL guard (all dialects + privacy policy), dialects/URLs, metadata and relationship inference, privacy, Flyway, retrieval/ranking, query service, table selector, glossary, example store, charting, ER diagram, providers (HTTP and LLM factories mocked).
 - Database layer runs against a temporary SQLite file (`shop_db` fixture in `tests/conftest.py`), including DB-level read-only enforcement.
